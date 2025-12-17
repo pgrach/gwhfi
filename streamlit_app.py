@@ -8,9 +8,24 @@ from datetime import datetime, timedelta
 
 # Load Config
 load_dotenv()
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-SHELLY_DEVICE_ID = os.getenv("SHELLY_DEVICE_ID")
+
+# Try getting from Environment (Local .env) or Streamlit Secrets (Cloud)
+def get_secret(key):
+    # 1. Try os.getenv (Local .env or System Env)
+    val = os.getenv(key)
+    if val:
+        return val
+    # 2. Try st.secrets (Streamlit Cloud TOML)
+    try:
+        if key in st.secrets:
+            return st.secrets[key]
+    except FileNotFoundError:
+        pass
+    return None
+
+SUPABASE_URL = get_secret("SUPABASE_URL")
+SUPABASE_KEY = get_secret("SUPABASE_KEY")
+SHELLY_DEVICE_ID = get_secret("SHELLY_DEVICE_ID")
 
 # Page Config
 st.set_page_config(
