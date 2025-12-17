@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Water Dashboard</title>
+    <style>
+        :root {
+            --bg-color: #1a1a2e;
+            --card-bg: #16213e;
+            --text-color: #e94560;
+            --accent-color: #0f3460;
+            --success: #4cc9f0;
+            --danger: #f72585;
+            --warning: #fca311;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: white;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+        }
+
+        .container {
+            max_width: 800px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            color: var(--text-color);
+            text-align: center;
+        }
+
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .card {
+            background-color: var(--card-bg);
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        .status-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .status-badge {
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+
+        .online {
+            background-color: var(--success);
+            color: black;
+        }
+
+        .offline {
+            background-color: var(--danger);
+            color: white;
+        }
+
+        .unknown {
+            background-color: var(--warning);
+            color: black;
+        }
+
+        .state-large {
+            font-size: 2em;
+            font-weight: bold;
+            text-align: center;
+            margin: 20px 0;
+            color: var(--success);
+        }
+
+        .state-off {
+            color: #888;
+        }
+
+        .schedule-list {
+            margin-top: 10px;
+            font-size: 0.9em;
+            color: #ccc;
+        }
+
+        .slot-item {
+            padding: 5px;
+            border-bottom: 1px solid #333;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .refresh-timer {
+            text-align: center;
+            font-size: 0.8em;
+            color: #666;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>💧 Smart Water Control</h1>
+
+        <div class="status-grid">
+            <!-- Main Heater -->
+            <div class="card">
+                <div class="status-header">
+                    <h3>Main Heater</h3>
+                    <span id="main-online" class="status-badge unknown">Checking...</span>
+                </div>
+                <div id="main-state" class="state-large">---</div>
+                <h4>Next Slots:</h4>
+                <div id="main-slots" class="schedule-list">
+                    Loading schedule...
+                </div>
+            </div>
+
+            <!-- Second Heater -->
+            <div class="card">
+                <div class="status-header">
+                    <h3>Second Heater</h3>
+                    <span id="second-online" class="status-badge unknown">Checking...</span>
+                </div>
+                <div id="second-state" class="state-large">---</div>
+                <h4>Next Slots:</h4>
+                <div id="second-slots" class="schedule-list">
+                    Loading schedule...
+                </div>
+            </div>
+        </div>
+
+        <div class="refresh-timer">
+            Last Updated: <span id="last-updated">---</span>
+        </div>
+    </div>
+
+    <script>
+        function updateStatus() {
+            fetch('/api/status')
+                .then(response => response.json())
+                .then(data => {
+                    const status = data.status;
+                    const schedule = data.schedule;
+
+                    // Update Main Heater
+                    const mainOnline = status.main_heater.online;
+                    const mainBadge = document.getElementById('main-online');
+                    mainBadge.textContent = mainOnline ? 'ONLINE' : 'OFFLINE';
+                    mainBadge.className = `status-badge ${mainOnline ? 'online' : 'offline'}`;
+
+                    const mainState = document.getElementById('main-state');
+                    if (!mainOnline) {
+                        mainState.textContent = 'OFFLINE';
+                        mainState.className = 'state-large state-off';
+                    } else {
+                        mainState.textContent = status.main_heater.state;
+                        mainState.className = `state-large ${status.main_heater.state === 'ON' ? '' : 'state-off'}`;
+                    }
+
+                    // Update Second Heater
+                    const secondOnline = status.second_heater.online;
+                    const secondBadge = document.getElementById('second-online');
+                    secondBadge.textContent = secondOnline ? 'ONLINE' : 'OFFLINE';
+                    secondBadge.className = `status-badge ${secondOnline ? 'online' : 'offline'}`;
+
+                    const secondState = document.getElementById('second-state');
+                    if (!secondOnline) {
+                        secondState.textContent = 'OFFLINE';
+                        secondState.className = 'state-large state-off';
+                    } else {
+                        secondState.textContent = status.second_heater.state;
+                        secondState.className = `state-large ${status.second_heater.state === 'ON' ? '' : 'state-off'}`;
+                    }
+
+                    // Update Schedule Lists
+                    updateSlots('main-slots', schedule.main);
+                    updateSlots('second-slots', schedule.second);
+
+                    // Timestamp
+                    document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
+                })
+                .catch(err => console.error(err));
+        }
+
+        function updateSlots(elementId, slots) {
+            const container = document.getElementById(elementId);
+            if (!slots || slots.length === 0) {
+                container.innerHTML = '<div class="slot-item">No upcoming slots scheduled</div>';
+                return;
+            }
+
+            let html = '';
+            // Show only next 3 slots to save space
+            slots.slice(0, 3).forEach(slot => {
+                // Parse date string (assumed ISO from python)
+                const fromTime = new Date(slot.valid_from).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                const toTime = new Date(slot.valid_to).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                html += `<div class="slot-item">
+                            <span>${fromTime} - ${toTime}</span>
+                            <span>${slot.value_inc_vat.toFixed(2)}p</span>
+                         </div>`;
+            });
+            container.innerHTML = html;
+        }
+
+        // Run immediately and every 5 seconds
+        updateStatus();
+        setInterval(updateStatus, 5000);
+    </script>
+</body>
+
+</html>
