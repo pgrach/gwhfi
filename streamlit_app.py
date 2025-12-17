@@ -83,7 +83,12 @@ latest = get_latest_readings()
 if latest:
     # Latest timestamp check
     last_time = pd.to_datetime(latest[0]['created_at'])
-    minutes_ago = (datetime.utcnow() - last_time).total_seconds() / 60
+    
+    # Supabase gives TZ-aware (UTC). datetime.utcnow() is naive.
+    # Fix: Use pd.Timestamp.now(tz='UTC') to match
+    now = pd.Timestamp.now(tz='UTC')
+    
+    minutes_ago = (now - last_time).total_seconds() / 60
     
     col_status, col_time = st.columns([3, 1])
     with col_status:
