@@ -16,3 +16,11 @@ env/
 # IDE
 .vscode/
 .idea/
+node_modules
+
+# Next.js
+.next/
+node_modules/
+out/
+build/
+node_modules

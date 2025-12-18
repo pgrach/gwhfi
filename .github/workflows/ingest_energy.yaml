@@ -31,4 +31,6 @@ jobs:
         SHELLY_CLOUD_AUTH_KEY: ${{ secrets.SHELLY_CLOUD_AUTH_KEY }}
         SHELLY_CLOUD_SERVER: ${{ secrets.SHELLY_CLOUD_SERVER }}
         SHELLY_DEVICE_ID: ${{ secrets.SHELLY_DEVICE_ID }}
-      run: python cloud_worker_oneshot.py
+      run: |
+        cd ingestion
+        python cloud_worker_oneshot.py
