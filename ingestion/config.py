@@ -16,10 +16,8 @@ class Config:
     OCTOPUS_REGION_CODE = os.getenv('OCTOPUS_REGION_CODE', 'C') # Default to London (C)
 
     # Logic
-    try:
-        MAIN_HEATER_DURATION_HOURS = int(os.getenv('MAIN_HEATER_DURATION_HOURS', 3))
-    except ValueError:
-        MAIN_HEATER_DURATION_HOURS = 3
+    # Smart Daily Limit is now automatic (Below Average)
+    # MAIN_HEATER_DURATION_HOURS deprecated
         
     try:
         SECOND_HEATER_THRESHOLD = float(os.getenv('SECOND_HEATER_THRESHOLD', 0.0))

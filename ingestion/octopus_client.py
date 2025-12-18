@@ -84,6 +84,38 @@ class OctopusClient:
         """
         return [r for r in rates if r['value_inc_vat'] <= threshold]
 
+    def find_smart_daily_slots(self, rates):
+        """
+        Analyzes rates by day, calculates daily average, and selects all slots
+        below that average.
+        """
+        if not rates:
+            return []
+
+        # Group by day
+        day_rates = {}
+        for r in rates:
+            day_key = r['valid_from'].date()
+            if day_key not in day_rates:
+                day_rates[day_key] = []
+            day_rates[day_key].append(r)
+
+        smart_slots = []
+        
+        for day, d_rates in day_rates.items():
+            if not d_rates: continue
+            
+            # Calculate average
+            avg_price = sum(r['value_inc_vat'] for r in d_rates) / len(d_rates)
+            
+            # Select slots below average
+            day_smart_slots = [r for r in d_rates if r['value_inc_vat'] <= avg_price]
+            smart_slots.extend(day_smart_slots)
+            
+            logger.info(f"Smart Analysis {day}: Avg={avg_price:.2f}p | Selected {len(day_smart_slots)}/{len(d_rates)} slots")
+
+        return smart_slots
+
 if __name__ == "__main__":
     # Test
     client = OctopusClient("AGILE-18-02-21", "C")

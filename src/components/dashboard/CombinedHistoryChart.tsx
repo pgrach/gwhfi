@@ -27,7 +27,7 @@ export function CombinedHistoryChart() {
     // 1 = Last 24h? No, let's stick to "Days History".
     // Let's redefine: 1 = Today+Yesterday? 
     // User wants "24h". Let's assume "Today" view (00:00 - 23:59).
-    const [viewMode, setViewMode] = useState<"today" | "7d" | "30d">("today")
+    const [viewMode, setViewMode] = useState<"today" | "tomorrow" | "7d" | "30d">("today")
 
     // Configuration for Octopus
     const PRODUCT = "AGILE-18-02-21"
@@ -45,6 +45,15 @@ export function CombinedHistoryChart() {
             if (viewMode === "today") {
                 // Today 00:00 to Today 23:59
                 startDate.setHours(0, 0, 0, 0)
+                endDate.setHours(23, 59, 59, 999)
+            } else if (viewMode === "tomorrow") {
+                // Today 00:00 to Tomorrow 23:59
+                // Or just Tomorrow? User usually wants to see the future plan.
+                // Let's show Tomorrow 00:00 to 23:59
+                startDate.setDate(startDate.getDate() + 1)
+                startDate.setHours(0, 0, 0, 0)
+
+                endDate.setDate(endDate.getDate() + 1)
                 endDate.setHours(23, 59, 59, 999)
             } else if (viewMode === "7d") {
                 // Last 7 days to Today 23:59
@@ -65,6 +74,9 @@ export function CombinedHistoryChart() {
             let rates: Rate[] = []
             let readings: any[] = []
 
+            // Explicitly ensure we fetch enough future data if viewing tomorrow
+            // For tomorrow view, we need period_from to be robust.
+            // Actually, querying from startDate (which might be tomorrow) is fine.
             const ratesPromise = fetch(
                 `https://api.octopus.energy/v1/products/${PRODUCT}/electricity-tariffs/${TARIFF}/standard-unit-rates/?period_from=${startIso}&page_size=1500`
             ).then(r => r.json())
@@ -73,7 +85,7 @@ export function CombinedHistoryChart() {
                 .from("energy_readings")
                 .select("*")
                 .gte("created_at", startIso)
-                .lte("created_at", endIso) // Limit to end of today to avoid next-day leakage if any
+                .lte("created_at", endIso)
                 .order("created_at", { ascending: true })
 
             try {
@@ -84,18 +96,44 @@ export function CombinedHistoryChart() {
                 console.error("Fetch error", e)
             }
 
+            // --- Pre-process Rates for "Smart Daily" Logic ---
+            // 1. Group rates by UTC Day
+            const ratesByDay = new Map<string, Rate[]>()
+            rates.forEach(r => {
+                // Ensure we use the date part of valid_from
+                const day = r.valid_from.split('T')[0]
+                if (!ratesByDay.has(day)) ratesByDay.set(day, [])
+                ratesByDay.get(day)?.push(r)
+            })
+
+            // 2. Calculate thresholds and tag "Smart" slots
+            // We'll create a Map of "Timestamp -> isSmart" for O(1) lookup
+            const smartMap = new Map<number, boolean>()
+
+            ratesByDay.forEach((dayRates, dayKey) => {
+                if (dayRates.length === 0) return
+
+                // Calculate average for THIS day
+                const sum = dayRates.reduce((a, b) => a + b.value_inc_vat, 0)
+                const avg = sum / dayRates.length
+
+                // Tag slots
+                dayRates.forEach(r => {
+                    const isSmart = r.value_inc_vat <= avg
+                    const t = new Date(r.valid_from).getTime()
+                    smartMap.set(t, isSmart)
+                })
+            })
+            // -------------------------------------------------
+
+
             // 3. Build Unified Buckets (30 mins)
-            // We iterate from start to end in 30 min steps.
             const buckets = []
             const currentCursor = new Date(startDate)
 
-            // Pre-process readings into a Map for faster lookup? 
-            // Or just filter? Filtering inside loop is O(N*M). Grouping is O(N).
-            // Let's bucket readings by 30-min slot key.
             const readingsBySlot = new Map<number, any[]>()
             readings.forEach(r => {
                 const t = new Date(r.created_at)
-                // Round down to nearest 30 min
                 const remainder = t.getMinutes() % 30
                 t.setMinutes(t.getMinutes() - remainder, 0, 0)
                 const key = t.getTime()
@@ -103,54 +141,48 @@ export function CombinedHistoryChart() {
                 readingsBySlot.get(key)?.push(r)
             })
 
-            // Sort rates for lookup
             rates.sort((a, b) => new Date(a.valid_from).getTime() - new Date(b.valid_from).getTime())
 
             while (currentCursor <= endDate) {
                 const timestamp = currentCursor.toLocaleString([], {
-                    month: viewMode === "today" ? undefined : 'numeric',
-                    day: viewMode === "today" ? undefined : 'numeric',
+                    month: (viewMode === "today" || viewMode === "tomorrow") ? undefined : 'numeric',
+                    day: (viewMode === "today" || viewMode === "tomorrow") ? undefined : 'numeric',
                     hour: '2-digit',
                     minute: '2-digit'
                 })
                 const slotTime = currentCursor.getTime()
 
                 // Find Rate
-                // Rate is valid if valid_from <= slotTime < valid_to
                 const rateObj = rates.find(r => {
                     const from = new Date(r.valid_from).getTime()
                     const to = new Date(r.valid_to).getTime()
                     return slotTime >= from && slotTime < to
                 })
 
-                // Find Power (Average in this slot)
-                const slotReadings = readingsBySlot.get(slotTime) || []
+                // Determine if Smart Slot (Lookup from pre-calculated map)
+                // We key by rateObj.valid_from time
+                let isSmart = false
+                if (rateObj) {
+                    const rateTime = new Date(rateObj.valid_from).getTime()
+                    isSmart = smartMap.get(rateTime) || false
+                }
 
-                // Calculate Avg Power for Channel 0 and 1
+                const slotReadings = readingsBySlot.get(slotTime) || []
                 const p0_vals = slotReadings.filter(r => r.channel === 0).map(r => r.power_w)
                 const p1_vals = slotReadings.filter(r => r.channel === 1).map(r => r.power_w)
 
                 const avg0 = p0_vals.length > 0 ? p0_vals.reduce((a, b) => a + b, 0) / p0_vals.length : null
                 const avg1 = p1_vals.length > 0 ? p1_vals.reduce((a, b) => a + b, 0) / p1_vals.length : null
 
-                // For "Today", we want to show the full day (including future).
-                // Future power will be null (correct).
-                // Future rates will be present (correct).
-
                 buckets.push({
                     timestamp,
                     raw_time: slotTime,
                     rate: rateObj ? rateObj.value_inc_vat : null,
-                    power_0: avg0, // Peak Heater (Main/Daily) -> Wait, check names!
-                    // Last check: 0=Peak(Negative), 1=Off-Peak(Daily). 
-                    // Let's use generic names here and let Legend handle it? 
-                    // No, chart needs labels.
-                    // 0 = Peak Heater (Negative)
-                    // 1 = Off-Peak Heater (Daily)
+                    isSmart: isSmart,
+                    power_0: avg0,
                     power_1: avg1
                 })
 
-                // Step 30 mins
                 currentCursor.setMinutes(currentCursor.getMinutes() + 30)
             }
 
@@ -160,12 +192,24 @@ export function CombinedHistoryChart() {
         fetchData()
     }, [viewMode])
 
+    // Custom Dot for Smart Slots
+    const SmartDot = (props: any) => {
+        const { cx, cy, payload } = props;
+        if (payload && payload.isSmart) {
+            return (
+                <circle cx={cx} cy={cy} r={3} fill="#10b981" stroke="none" />
+            );
+        }
+        return null;
+    };
+
     return (
         <Card className="col-span-4">
             <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle>Combined History (Power & Rates)</CardTitle>
                 <div className="flex space-x-2">
                     <Button variant={viewMode === "today" ? "default" : "outline"} size="sm" onClick={() => setViewMode("today")}>Today</Button>
+                    <Button variant={viewMode === "tomorrow" ? "default" : "outline"} size="sm" onClick={() => setViewMode("tomorrow")}>Tomorrow</Button>
                     <Button variant={viewMode === "7d" ? "default" : "outline"} size="sm" onClick={() => setViewMode("7d")}>7d</Button>
                     <Button variant={viewMode === "30d" ? "default" : "outline"} size="sm" onClick={() => setViewMode("30d")}>30d</Button>
                 </div>
@@ -181,7 +225,7 @@ export function CombinedHistoryChart() {
                                 fontSize={12}
                                 tickLine={false}
                                 axisLine={false}
-                                minTickGap={viewMode === "today" ? 30 : 60}
+                                minTickGap={(viewMode === "today" || viewMode === "tomorrow") ? 30 : 60}
                             />
                             {/* Left Axis: Price */}
                             <YAxis
@@ -207,6 +251,19 @@ export function CombinedHistoryChart() {
 
                             <Tooltip
                                 contentStyle={{ backgroundColor: "#1f2937", border: "none", color: "#fff" }}
+                                formatter={(value: any, name: any, props: any) => {
+                                    if (name === "Rate (p/kWh)") {
+                                        const isSmart = props.payload.isSmart
+                                        return [
+                                            <div key="rate">
+                                                <span>{Number(value).toFixed(2)}p</span>
+                                                {isSmart && <span className="ml-2 text-green-400 font-bold">●</span>}
+                                            </div>,
+                                            name
+                                        ]
+                                    }
+                                    return [`${Number(value).toFixed(0)}W`, name]
+                                }}
                             />
                             <Legend />
 
@@ -218,7 +275,7 @@ export function CombinedHistoryChart() {
                                 name="Rate (p/kWh)"
                                 stroke="#8884d8"
                                 strokeWidth={2}
-                                dot={false}
+                                dot={<SmartDot />}
                                 connectNulls
                             />
 

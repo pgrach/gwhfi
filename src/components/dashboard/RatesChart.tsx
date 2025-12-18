@@ -110,8 +110,13 @@ export function RatesChart() {
         const fetchRates = async () => {
             try {
                 // Fetch generous amount to cover tomorrow
+                // Explicitly start from today to avoid getting old pages
+                const now = new Date();
+                now.setHours(0, 0, 0, 0); // Start of today
+                const fromIso = now.toISOString();
+
                 const response = await fetch(
-                    `https://api.octopus.energy/v1/products/${PRODUCT}/electricity-tariffs/${TARIFF}/standard-unit-rates/?page_size=100`
+                    `https://api.octopus.energy/v1/products/${PRODUCT}/electricity-tariffs/${TARIFF}/standard-unit-rates/?period_from=${fromIso}&page_size=100`
                 )
                 // Note: default page size is 100, which is ~48 hours (30 min slots = 48 per day). 
                 // So 100 covers today and tomorrow mostly.
@@ -139,14 +144,38 @@ export function RatesChart() {
         const filtered = allRates
             .filter(r => getDayStr(r.valid_from) === targetStr)
             .sort((a, b) => new Date(a.valid_from).getTime() - new Date(b.valid_from).getTime())
-            .map(r => ({
-                time: new Date(r.valid_from).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                price: r.value_inc_vat
-            }))
 
-        setRates(filtered)
+        const avg = filtered.length > 0
+            ? filtered.reduce((acc, r) => acc + r.value_inc_vat, 0) / filtered.length
+            : 0
+
+        const finalData = filtered.map(r => ({
+            time: new Date(r.valid_from).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            price: r.value_inc_vat,
+            isSmart: r.value_inc_vat <= avg
+        }))
+
+        setRates(finalData)
     }, [viewDate, allRates])
 
+
+    // Custom Dot for Smart Slots
+    const SmartDot = (props: any) => {
+        const { cx, cy, payload } = props;
+        // Calculate average for the current view
+        // Ideally pass avg as prop, but 'rates' state is just an array.
+        // Let's re-calculate avg here or pass in payload?
+        // Recharts payload is the data point.
+        // We need to know if it's smart.
+        // Let's pre-calculate 'isSmart' in the data mapping.
+
+        if (payload && payload.isSmart) {
+            return (
+                <circle cx={cx} cy={cy} r={3} fill="#10b981" stroke="none" />
+            );
+        }
+        return null;
+    };
 
     return (
         <Card className="col-span-4">
@@ -192,7 +221,17 @@ export function RatesChart() {
                                 />
                                 <Tooltip
                                     contentStyle={{ backgroundColor: "#1f2937", border: "none", color: "#fff" }}
-                                    formatter={(value: any) => [`${Number(value).toFixed(2)}p`, "Price"]}
+                                    formatter={(value: any, name: any, props: any) => {
+                                        const price = Number(value);
+                                        const isSmart = props.payload.isSmart;
+                                        return [
+                                            <div key="price">
+                                                <span>{price.toFixed(2)}p</span>
+                                                {isSmart && <span className="ml-2 text-green-400 font-bold">●</span>}
+                                            </div>,
+                                            "Price"
+                                        ]
+                                    }}
                                 />
                                 <ReferenceLine y={0} stroke="green" strokeDasharray="3 3" />
                                 <Line
@@ -200,7 +239,7 @@ export function RatesChart() {
                                     dataKey="price"
                                     stroke="#8884d8"
                                     strokeWidth={2}
-                                    dot={false}
+                                    dot={<SmartDot />}
                                 />
                             </LineChart>
                         </ResponsiveContainer>

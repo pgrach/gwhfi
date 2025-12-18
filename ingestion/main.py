@@ -62,9 +62,12 @@ class SmartWaterController:
             logger.warning("No future rates found! Waiting for next update.")
             return
 
-        # Off-Peak Heater: Cheapest N hours
-        cheapest = self.octopus.find_cheapest_blocks(future_rates, Config.MAIN_HEATER_DURATION_HOURS)
-        self.main_heater_slots = cheapest
+        # Off-Peak Heater: Smart Daily Analysis (Below Average)
+        # cheapest = self.octopus.find_cheapest_blocks(future_rates, Config.MAIN_HEATER_DURATION_HOURS)
+        # self.main_heater_slots = cheapest
+        
+        smart_daily = self.octopus.find_smart_daily_slots(future_rates)
+        self.main_heater_slots = smart_daily
         
         # Peak Heater: Below threshold
         negative = self.octopus.get_negative_rates(future_rates, Config.SECOND_HEATER_THRESHOLD)
