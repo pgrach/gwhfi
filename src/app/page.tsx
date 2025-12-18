@@ -1,5 +1,5 @@
 import { LiveStatus } from "@/components/dashboard/LiveStatus"
-import { HistoryChart } from "@/components/dashboard/HistoryChart"
+import { CombinedHistoryChart } from "@/components/dashboard/CombinedHistoryChart"
 
 export default function DashboardPage() {
     return (
@@ -9,7 +9,7 @@ export default function DashboardPage() {
             </div>
             <div className="space-y-4">
                 <LiveStatus />
-                <HistoryChart />
+                <CombinedHistoryChart />
             </div>
         </div>
     )
