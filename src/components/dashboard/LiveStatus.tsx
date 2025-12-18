@@ -63,10 +63,10 @@ export function LiveStatus() {
             </div>
 
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-2">
-                {/* Main Heater */}
+                {/* Peak Heater */}
                 <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Main Heater</CardTitle>
+                        <CardTitle className="text-sm font-medium">Peak Heater</CardTitle>
                         <Zap className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
                     <CardContent>
@@ -77,10 +77,10 @@ export function LiveStatus() {
                     </CardContent>
                 </Card>
 
-                {/* Second Heater */}
+                {/* Off-Peak Heater */}
                 <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Second Heater</CardTitle>
+                        <CardTitle className="text-sm font-medium">Off-Peak Heater</CardTitle>
                         <Activity className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
                     <CardContent>

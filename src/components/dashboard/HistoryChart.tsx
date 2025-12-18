@@ -92,8 +92,8 @@ export function HistoryChart() {
                   we need to ensure 'connectNulls' or careful mapping.
                   Simplest: Render two lines, it will ignore undefined keys for that row.
               */}
-                            <Line type="monotone" dataKey="power_0" name="Main Heater" stroke="#2563eb" connectNulls strokeWidth={2} dot={false} />
-                            <Line type="monotone" dataKey="power_1" name="Second Heater" stroke="#16a34a" connectNulls strokeWidth={2} dot={false} />
+                            <Line type="monotone" dataKey="power_0" name="Peak Heater" stroke="#2563eb" connectNulls strokeWidth={2} dot={false} />
+                            <Line type="monotone" dataKey="power_1" name="Off-Peak Heater" stroke="#16a34a" connectNulls strokeWidth={2} dot={false} />
                         </LineChart>
                     </ResponsiveContainer>
                 </div>

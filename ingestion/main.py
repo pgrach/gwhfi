@@ -32,8 +32,8 @@ class SmartWaterController:
         
         # State storage for UI
         self.system_state = {
-            "main_heater": {"online": False, "state": "UNKNOWN"},
-            "second_heater": {"online": False, "state": "UNKNOWN"},
+            "peak_heater": {"online": False, "state": "UNKNOWN"},
+            "off_peak_heater": {"online": False, "state": "UNKNOWN"},
             "last_updated": None,
             "next_schedule_update": None,
             "rates": []
@@ -62,11 +62,11 @@ class SmartWaterController:
             logger.warning("No future rates found! Waiting for next update.")
             return
 
-        # Main Heater: Cheapest N hours
+        # Off-Peak Heater: Cheapest N hours
         cheapest = self.octopus.find_cheapest_blocks(future_rates, Config.MAIN_HEATER_DURATION_HOURS)
         self.main_heater_slots = cheapest
         
-        # Second Heater: Below threshold
+        # Peak Heater: Below threshold
         negative = self.octopus.get_negative_rates(future_rates, Config.SECOND_HEATER_THRESHOLD)
         self.second_heater_slots = negative
         
@@ -74,13 +74,13 @@ class SmartWaterController:
         self.system_state["rates"] = rates  # Store all rates for graph if needed
         self.system_state["next_schedule_update"] = (datetime.now() + timedelta(hours=6)).strftime("%H:%M")
         
-        logger.info(f"Scheduled Main Heater Slots: {len(self.main_heater_slots)}")
-        for slot in self.main_heater_slots:
-            logger.info(f"  Main: {slot['valid_from']} - {slot['valid_to']} ({slot['value_inc_vat']}p)")
-
-        logger.info(f"Scheduled Second Heater Slots: {len(self.second_heater_slots)}")
+        logger.info(f"Scheduled Peak Heater Slots: {len(self.second_heater_slots)}")
         for slot in self.second_heater_slots:
-            logger.info(f"  Second: {slot['valid_from']} - {slot['valid_to']} ({slot['value_inc_vat']}p)")
+            logger.info(f"  Peak: {slot['valid_from']} - {slot['valid_to']} ({slot['value_inc_vat']}p)")
+
+        logger.info(f"Scheduled Off-Peak Heater Slots: {len(self.main_heater_slots)}")
+        for slot in self.main_heater_slots:
+            logger.info(f"  Off-Peak: {slot['valid_from']} - {slot['valid_to']} ({slot['value_inc_vat']}p)")
 
     def is_in_slot(self, slots, current_time):
         """Checks if current_time is within any of the provided slots."""
@@ -94,15 +94,14 @@ class SmartWaterController:
         now_utc = self.time_service.now()
         self.system_state["last_updated"] = now_utc.strftime("%Y-%m-%d %H:%M:%S")
         
-        # 1. Main Heater Control
-        active_main, slot_main = self.is_in_slot(self.main_heater_slots, now_utc)
-        print(f"DEBUG: Time={now_utc}, ActiveMain={active_main}, Slot={slot_main}") # DEBUG
-        self.apply_device_state(Config.TUYA_DEVICE_ID_MAIN, active_main, "Main Heater", slot_main)
+        # 1. Peak Heater Control (Device MAIN, Negative Slots)
+        active_peak, slot_peak = self.is_in_slot(self.second_heater_slots, now_utc)
+        self.apply_device_state(Config.TUYA_DEVICE_ID_MAIN, active_peak, "Peak Heater", slot_peak)
 
-        # 2. Second Heater Control
+        # 2. Off-Peak Heater Control (Device SECOND, Daily Slots)
         if Config.TUYA_DEVICE_ID_SECOND:
-            active_second, slot_second = self.is_in_slot(self.second_heater_slots, now_utc)
-            self.apply_device_state(Config.TUYA_DEVICE_ID_SECOND, active_second, "Second Heater", slot_second)
+            active_offpeak, slot_offpeak = self.is_in_slot(self.main_heater_slots, now_utc)
+            self.apply_device_state(Config.TUYA_DEVICE_ID_SECOND, active_offpeak, "Off-Peak Heater", slot_offpeak)
             
         # Update cached state explicitly for UI if apply_device_state didn't trigger health check type logic
         # Ideally, we rely on periodic perform_health_check for "Online" status, but here we know the "Target" state.
@@ -121,7 +120,7 @@ class SmartWaterController:
             is_online = status_info.get('online', False)
             
             # Update Internal State Cache
-            key = "main_heater" if device_id == Config.TUYA_DEVICE_ID_MAIN else "second_heater"
+            key = "peak_heater" if device_id == Config.TUYA_DEVICE_ID_MAIN else "off_peak_heater"
             self.system_state[key]["online"] = is_online
             self.system_state[key]["state"] = "ON" if is_on else "OFF"
             
@@ -149,8 +148,8 @@ class SmartWaterController:
         logger.info("--- PERFORMING DEVICE HEALTH CHECK ---")
         
         devices = [
-            ("Main Heater", Config.TUYA_DEVICE_ID_MAIN, "main_heater"),
-            ("Second Heater", Config.TUYA_DEVICE_ID_SECOND, "second_heater")
+            ("Peak Heater", Config.TUYA_DEVICE_ID_MAIN, "peak_heater"),
+            ("Off-Peak Heater", Config.TUYA_DEVICE_ID_SECOND, "off_peak_heater")
         ]
         
         for name, dev_id, key in devices:
