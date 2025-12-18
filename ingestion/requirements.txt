@@ -1,6 +1,6 @@
 requests
-streamlit
-pandas
-python-dotenv
 schedule
-plotly
+python-dotenv
+tinytuya
+ntplib
+pytz

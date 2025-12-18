@@ -34,3 +34,33 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+## Architecture & Running
+
+This project consists of three main components:
+
+1.  **Frontend (Next.js)**: The modern web dashboard.
+2.  **Controller (Python)**: Local service that controls the heaters based on Octopus Agile rates (via Tuya).
+3.  **Data Worker (Python)**: Background service that ingests real-time power data from Shelly Cloud to Supabase.
+
+### How to Run
+
+**1. Start the Frontend**
+```bash
+npm run dev
+# Open http://localhost:3000
+```
+
+**2. Start the Controller**
+Controls the physical devices.
+```bash
+cd ingestion
+python main.py
+```
+
+**3. Start the Data Worker**
+Logs energy data to the database.
+```bash
+cd ingestion
+python cloud_worker.py
+```
