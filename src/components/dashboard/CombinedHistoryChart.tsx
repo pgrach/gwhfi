@@ -28,6 +28,7 @@ export function CombinedHistoryChart() {
     // Let's redefine: 1 = Today+Yesterday? 
     // User wants "24h". Let's assume "Today" view (00:00 - 23:59).
     const [viewMode, setViewMode] = useState<"today" | "tomorrow" | "7d" | "30d">("today")
+    const [hasRates, setHasRates] = useState(true)
 
     // Configuration for Octopus
     const PRODUCT = "AGILE-18-02-21"
@@ -90,10 +91,19 @@ export function CombinedHistoryChart() {
 
             try {
                 const [rData, sData] = await Promise.all([ratesPromise, readingsPromise])
-                if (rData.results) rates = rData.results
+                if (rData.results) {
+                    rates = rData.results
+                    // Check if we actually got rates for the requested period
+                    if (rates.length === 0 && viewMode === "tomorrow") {
+                        setHasRates(false)
+                    } else {
+                        setHasRates(true)
+                    }
+                }
                 if (sData.data) readings = sData.data
             } catch (e) {
                 console.error("Fetch error", e)
+                setHasRates(false)
             }
 
             // --- Pre-process Rates for "Smart Daily" Logic ---
@@ -212,6 +222,29 @@ export function CombinedHistoryChart() {
         return null;
     };
 
+    // Check for missing Tomorrow data
+    // We check hasRates because 'data' might be populated with empty buckets
+    if (viewMode === "tomorrow" && !hasRates) {
+        return (
+            <Card className="col-span-4">
+                <CardHeader>
+                    <CardTitle>Combined History (Power & Rates)</CardTitle>
+                </CardHeader>
+                <CardContent className="h-[400px] flex items-center justify-center">
+                    <div className="text-center space-y-4">
+                        <Button variant="outline" size="sm" onClick={() => setViewMode("today")}>
+                            Back to Today
+                        </Button>
+                        <p className="text-muted-foreground">
+                            Tomorrow's rates are not yet available from Octopus Energy. <br />
+                            Please check back after 4:00 PM.
+                        </p>
+                    </div>
+                </CardContent>
+            </Card>
+        )
+    }
+
     return (
         <Card className="col-span-4">
             <CardHeader className="flex flex-row items-center justify-between">
@@ -239,12 +272,12 @@ export function CombinedHistoryChart() {
                             {/* Left Axis: Price */}
                             <YAxis
                                 yAxisId="left"
-                                stroke="#8884d8"
+                                stroke="#f050f8"
                                 fontSize={12}
                                 tickLine={false}
                                 axisLine={false}
                                 tickFormatter={(value) => `${value}p`}
-                                label={{ value: 'Price (p/kWh)', angle: -90, position: 'insideLeft', fill: '#8884d8' }}
+                                label={{ value: 'Price (p/kWh)', angle: -90, position: 'insideLeft', fill: '#f050f8' }}
                             />
                             {/* Right Axis: Power */}
                             <YAxis
@@ -282,7 +315,7 @@ export function CombinedHistoryChart() {
                                 type="stepAfter"
                                 dataKey="rate"
                                 name="Rate (p/kWh)"
-                                stroke="#8884d8"
+                                stroke="#f050f8"
                                 strokeWidth={2}
                                 dot={<SmartDot />}
                                 connectNulls
