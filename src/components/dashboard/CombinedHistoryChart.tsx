@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { supabase } from "@/lib/supabase"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import {
     LineChart,
@@ -29,6 +29,7 @@ export function CombinedHistoryChart() {
     // User wants "24h". Let's assume "Today" view (00:00 - 23:59).
     const [viewMode, setViewMode] = useState<"today" | "tomorrow" | "7d" | "30d">("today")
     const [hasRates, setHasRates] = useState(true)
+    const [totals, setTotals] = useState({ peak: 0, offPeak: 0 })
 
     // Configuration for Octopus
     const PRODUCT = "AGILE-18-02-21"
@@ -82,6 +83,7 @@ export function CombinedHistoryChart() {
                 `https://api.octopus.energy/v1/products/${PRODUCT}/electricity-tariffs/${TARIFF}/standard-unit-rates/?period_from=${startIso}&page_size=1500`
             ).then(r => r.json())
 
+            // Note: We need energy_total_wh for accurate consumption
             const readingsPromise = supabase
                 .from("energy_readings")
                 .select("*")
@@ -105,6 +107,35 @@ export function CombinedHistoryChart() {
                 console.error("Fetch error", e)
                 setHasRates(false)
             }
+
+            // --- Calculate Totals (kWh) ---
+            // Robust calculation: sum of positive deltas to handle counter resets
+            const calculateKWh = (channelId: number) => {
+                const channelReadings = readings.filter(r => r.channel === channelId)
+                if (channelReadings.length < 2) return 0
+
+                // Simple Max - Min method (assuming no resets for now as it's cleaner for short periods)
+                // If we want to be robust against resets:
+                let totalWh = 0
+                for (let i = 1; i < channelReadings.length; i++) {
+                    const prev = channelReadings[i - 1].energy_total_wh
+                    const curr = channelReadings[i].energy_total_wh
+                    // Only add if monotonic increase, handle reset (curr < prev) by assuming curr is new accumulation
+                    if (curr >= prev) {
+                        totalWh += (curr - prev)
+                    } else {
+                        // Counter reset
+                        totalWh += curr
+                    }
+                }
+                return totalWh / 1000 // Convert to kWh
+            }
+
+            setTotals({
+                peak: calculateKWh(0),
+                offPeak: calculateKWh(1)
+            })
+            // -----------------------------
 
             // --- Pre-process Rates for "Smart Daily" Logic ---
             // 1. Group rates by UTC Day
@@ -247,8 +278,16 @@ export function CombinedHistoryChart() {
 
     return (
         <Card className="col-span-4">
-            <CardHeader className="flex flex-row items-center justify-between">
-                <CardTitle>Combined History (Power & Rates)</CardTitle>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <div className="space-y-1">
+                    <CardTitle>Combined History (Power & Rates)</CardTitle>
+                    <CardDescription>
+                        Total Consumption:
+                        <span className="text-blue-500 font-bold ml-2">Peak: {totals.peak.toFixed(2)} kWh</span>
+                        <span className="text-muted-foreground mx-2">|</span>
+                        <span className="text-green-600 font-bold">Off-Peak: {totals.offPeak.toFixed(2)} kWh</span>
+                    </CardDescription>
+                </div>
                 <div className="flex space-x-2">
                     <Button variant={viewMode === "today" ? "default" : "outline"} size="sm" onClick={() => setViewMode("today")}>Today</Button>
                     <Button variant={viewMode === "tomorrow" ? "default" : "outline"} size="sm" onClick={() => setViewMode("tomorrow")}>Tomorrow</Button>
@@ -349,3 +388,4 @@ export function CombinedHistoryChart() {
         </Card>
     )
 }
+
