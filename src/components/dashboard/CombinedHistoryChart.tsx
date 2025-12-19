@@ -127,14 +127,18 @@ export function CombinedHistoryChart() {
             // -------------------------------------------------
 
 
-            // 3. Build Unified Buckets (30 mins)
+            // 3. Build Unified Buckets (Dynamic Granularity)
+            // Today/Tomorrow = 1 min (Max resolution)
+            // History = 30 mins (Performance)
+            const bucketMinutes = (viewMode === "today" || viewMode === "tomorrow") ? 1 : 30
+
             const buckets = []
             const currentCursor = new Date(startDate)
 
             const readingsBySlot = new Map<number, any[]>()
             readings.forEach(r => {
                 const t = new Date(r.created_at)
-                const remainder = t.getMinutes() % 30
+                const remainder = t.getMinutes() % bucketMinutes
                 t.setMinutes(t.getMinutes() - remainder, 0, 0)
                 const key = t.getTime()
                 if (!readingsBySlot.has(key)) readingsBySlot.set(key, [])
@@ -183,7 +187,7 @@ export function CombinedHistoryChart() {
                     power_1: avg1
                 })
 
-                currentCursor.setMinutes(currentCursor.getMinutes() + 30)
+                currentCursor.setMinutes(currentCursor.getMinutes() + bucketMinutes)
             }
 
             setData(buckets)
@@ -192,13 +196,18 @@ export function CombinedHistoryChart() {
         fetchData()
     }, [viewMode])
 
-    // Custom Dot for Smart Slots
+    // Custom Dot for Smart Slots (Only show every 30 mins to avoid clutter)
     const SmartDot = (props: any) => {
         const { cx, cy, payload } = props;
         if (payload && payload.isSmart) {
-            return (
-                <circle cx={cx} cy={cy} r={3} fill="#10b981" stroke="none" />
-            );
+            // Check if on 30-min boundary
+            const date = new Date(payload.raw_time)
+            const min = date.getMinutes()
+            if (min % 30 === 0) {
+                return (
+                    <circle cx={cx} cy={cy} r={3} fill="#10b981" stroke="none" />
+                );
+            }
         }
         return null;
     };
@@ -282,7 +291,7 @@ export function CombinedHistoryChart() {
                             {/* Heater Lines (Right Axis) */}
                             <Line
                                 yAxisId="right"
-                                type="monotone"
+                                type="stepAfter"
                                 dataKey="power_0"
                                 name="Peak Heater (W)"
                                 stroke="#2563eb"
@@ -292,7 +301,7 @@ export function CombinedHistoryChart() {
                             />
                             <Line
                                 yAxisId="right"
-                                type="monotone"
+                                type="stepAfter"
                                 dataKey="power_1"
                                 name="Off-Peak Heater (W)"
                                 stroke="#16a34a"
