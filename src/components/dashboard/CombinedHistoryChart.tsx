@@ -120,11 +120,16 @@ export function CombinedHistoryChart() {
                 for (let i = 1; i < channelReadings.length; i++) {
                     const prev = channelReadings[i - 1].energy_total_wh
                     const curr = channelReadings[i].energy_total_wh
-                    // Only add if monotonic increase, handle reset (curr < prev) by assuming curr is new accumulation
+
+                    // Ignore transitions from 0 (backfilled data) to real counters
+                    if (prev === 0 || curr === 0) continue;
+
+                    // Only add if monotonic increase
                     if (curr >= prev) {
                         totalWh += (curr - prev)
                     } else {
-                        // Counter reset
+                        // Counter reset (rare, but possible if device replaced)
+                        // If delta is huge (negative), assume reset to 0+curr
                         totalWh += curr
                     }
                 }
