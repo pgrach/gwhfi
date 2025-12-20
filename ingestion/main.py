@@ -25,6 +25,9 @@ class SmartWaterController:
         
         self.time_service = TimeService()
         self.tuya = TuyaManager()
+        if not getattr(self.tuya, 'enabled', True):
+            logger.warning("Tuya Manager disabled due to missing config. Running in Data-Only mode.")
+        
         self.octopus = OctopusClient(Config.OCTOPUS_PRODUCT_CODE, Config.OCTOPUS_REGION_CODE)
         
         self.main_heater_slots = []
@@ -150,6 +153,11 @@ class SmartWaterController:
         """Checks and prints the health status of all devices."""
         logger.info("--- PERFORMING DEVICE HEALTH CHECK ---")
         
+        if not getattr(self.tuya, 'enabled', True):
+            logger.warning("⚠️ Control Logic DISABLED (Configuration Missing)")
+            logger.info("--- HEALTH CHECK SKIPPED ---\n")
+            return
+
         devices = [
             ("Peak Heater", Config.TUYA_DEVICE_ID_MAIN, "peak_heater"),
             ("Off-Peak Heater", Config.TUYA_DEVICE_ID_SECOND, "off_peak_heater")

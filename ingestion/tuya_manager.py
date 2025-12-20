@@ -8,21 +8,31 @@ logger = logging.getLogger(__name__)
 
 class TuyaManager:
     def __init__(self):
+        self.enabled = False
         if not Config.validate():
-            raise ValueError("Invalid Configuration")
-            
-        self.cloud = tinytuya.Cloud(
-            apiRegion=Config.TUYA_REGION, 
-            apiKey=Config.TUYA_ACCESS_ID, 
-            apiSecret=Config.TUYA_ACCESS_KEY, 
-            apiDeviceID=Config.TUYA_DEVICE_ID_MAIN
-        )
+            logger.warning("Tuya Configuration missing. Control logic will be DISABLED.")
+            return
+
+        try:
+            self.cloud = tinytuya.Cloud(
+                apiRegion=Config.TUYA_REGION, 
+                apiKey=Config.TUYA_ACCESS_ID, 
+                apiSecret=Config.TUYA_ACCESS_KEY, 
+                apiDeviceID=Config.TUYA_DEVICE_ID_MAIN
+            )
+            self.enabled = True
+        except Exception as e:
+            logger.error(f"Failed to initialize Tuya Cloud: {e}")
+            self.enabled = False
 
     def get_status(self, device_id):
         """
         Gets the full device status including online/offline state.
         Returns a dict with 'online' (bool) and 'switch_1' (bool).
         """
+        if not self.enabled:
+            return None
+
         try:
             # Use cloudrequest to get full device details including 'online' status
             result = self.cloud.cloudrequest(f'/v1.0/devices/{device_id}')
@@ -54,6 +64,10 @@ class TuyaManager:
         return self._send_command(device_id, False)
 
     def _send_command(self, device_id, switch_state):
+        if not self.enabled:
+            logger.debug(f"Control disabled. Skipping command to {device_id}")
+            return None
+
         try:
             # Standard Tuya switch command
             commands = {
@@ -92,6 +106,6 @@ if __name__ == "__main__":
                 print("Second Device Status: Failed to fetch")
             
     except ValueError as e:
-        print(f"Configuration Error: {e}")
+        print(f"Configuration Warning: {e} (Running in headless/monitoring mode)")
     except Exception as e:
         print(f"Unexpected Error: {e}")
