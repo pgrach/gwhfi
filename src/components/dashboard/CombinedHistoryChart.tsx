@@ -283,17 +283,20 @@ export function CombinedHistoryChart() {
 
     return (
         <Card className="col-span-4">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardHeader className="flex flex-col space-y-4 sm:flex-row sm:items-center sm:justify-between sm:space-y-0 pb-2">
                 <div className="space-y-1">
-                    <CardTitle>Combined History (Power & Rates)</CardTitle>
-                    <CardDescription>
-                        Total Consumption:
-                        <span className="text-blue-500 font-bold ml-2">Peak: {totals.peak.toFixed(2)} kWh</span>
-                        <span className="text-muted-foreground mx-2">|</span>
-                        <span className="text-green-600 font-bold">Off-Peak: {totals.offPeak.toFixed(2)} kWh</span>
+                    <CardTitle className="text-xl sm:text-2xl">Combined History</CardTitle>
+                    <CardDescription className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-0">
+                        <span>Total Consumption:</span>
+                        <span className="hidden sm:inline text-muted-foreground mx-2">|</span>
+                        <div className="flex gap-4 sm:gap-0">
+                            <span className="text-blue-500 font-bold whitespace-nowrap">Peak: {totals.peak.toFixed(2)} kWh</span>
+                            <span className="hidden sm:inline text-muted-foreground mx-2">|</span>
+                            <span className="text-green-600 font-bold whitespace-nowrap">Off-Peak: {totals.offPeak.toFixed(2)} kWh</span>
+                        </div>
                     </CardDescription>
                 </div>
-                <div className="flex space-x-2">
+                <div className="flex flex-wrap gap-2">
                     <Button variant={viewMode === "today" ? "default" : "outline"} size="sm" onClick={() => setViewMode("today")}>Today</Button>
                     <Button variant={viewMode === "tomorrow" ? "default" : "outline"} size="sm" onClick={() => setViewMode("tomorrow")}>Tomorrow</Button>
                     <Button variant={viewMode === "7d" ? "default" : "outline"} size="sm" onClick={() => setViewMode("7d")}>7d</Button>

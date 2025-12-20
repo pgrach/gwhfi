@@ -179,9 +179,9 @@ export function RatesChart() {
 
     return (
         <Card className="col-span-4">
-            <CardHeader className="flex flex-row items-center justify-between">
+            <CardHeader className="flex flex-col space-y-4 sm:flex-row sm:items-center sm:justify-between sm:space-y-0">
                 <CardTitle>Octopus Agile Rates ({viewDate === "today" ? "Today" : "Tomorrow"})</CardTitle>
-                <div className="flex space-x-2">
+                <div className="flex space-x-2 w-full sm:w-auto justify-between sm:justify-end">
                     <Button
                         variant={viewDate === "today" ? "default" : "outline"}
                         size="sm"
