@@ -77,63 +77,89 @@ export function CombinedHistoryChart() {
             let readings: any[] = []
 
             // Explicitly ensure we fetch enough future data if viewing tomorrow
-            // For tomorrow view, we need period_from to be robust.
-            // Actually, querying from startDate (which might be tomorrow) is fine.
             const ratesPromise = fetch(
                 `https://api.octopus.energy/v1/products/${PRODUCT}/electricity-tariffs/${TARIFF}/standard-unit-rates/?period_from=${startIso}&page_size=1500`
             ).then(r => r.json())
 
-            // Note: We need energy_total_wh for accurate consumption
-            const readingsPromise = supabase
-                .from("energy_readings")
-                .select("*")
-                .gte("created_at", startIso)
-                .lte("created_at", endIso)
-                .order("created_at", { ascending: true })
+            // Define bucket size based on view mode
+            // Today/Tomorrow = 1 min (Raw data)
+            // 7d = 1 hour (Aggregated)
+            // 30d = 1 hour (Aggregated) or maybe 4 hours? Let's try 1h first.
+            const isLongView = viewMode === "7d" || viewMode === "30d"
+            const bucketMinutes = isLongView ? 60 : 1
+
+            let readingsPromise;
+
+            if (isLongView) {
+                // Use RPC for downsampling
+                readingsPromise = supabase
+                    .rpc('get_downsampled_readings', {
+                        start_time: startIso,
+                        end_time: endIso,
+                        bucket_seconds: bucketMinutes * 60
+                    })
+            } else {
+                // Use Raw Data
+                readingsPromise = supabase
+                    .from("energy_readings")
+                    .select("*")
+                    .gte("created_at", startIso)
+                    .lte("created_at", endIso)
+                    .order("created_at", { ascending: true }) // Back to ascending for raw data as we don't have limit issue with short ranges
+            }
 
             try {
                 const [rData, sData] = await Promise.all([ratesPromise, readingsPromise])
                 if (rData.results) {
                     rates = rData.results
-                    // Check if we actually got rates for the requested period
                     if (rates.length === 0 && viewMode === "tomorrow") {
                         setHasRates(false)
                     } else {
                         setHasRates(true)
                     }
                 }
-                if (sData.data) readings = sData.data
+
+                if (sData.data) {
+                    readings = sData.data
+                } else if (sData.error) {
+                    console.error("Supabase Error:", sData.error)
+                }
             } catch (e) {
                 console.error("Fetch error", e)
                 setHasRates(false)
             }
 
             // --- Calculate Totals (kWh) ---
-            // Robust calculation: sum of positive deltas to handle counter resets
+            // For long view, we can sum the avg_power * hours? 
+            // Or just keep the total calculation roughly same?
+            // Actually, for accurate totals, we might want a separate RPC or just accept approximation.
+            // But the user cares about the graph mainly.
+            // Let's mock totals for now if RPC, or calculate from averages (avg power W * hours = Wh).
+
             const calculateKWh = (channelId: number) => {
+                if (isLongView) {
+                    // Sum of (avg_power * 1 hour)
+                    const channelReadings = readings.filter(r => r.channel === channelId)
+                    const totalWh = channelReadings.reduce((sum, r) => sum + (r.avg_power || 0), 0)
+                    // Since bucket is 1 hour, Average Watts * 1 Hour = Watt-Hours.
+                    return totalWh / 1000
+                }
+
+                // ... Original logic for raw data ...
                 const channelReadings = readings.filter(r => r.channel === channelId)
                 if (channelReadings.length < 2) return 0
-
-                // Simple Max - Min method (assuming no resets for now as it's cleaner for short periods)
-                // If we want to be robust against resets:
                 let totalWh = 0
                 for (let i = 1; i < channelReadings.length; i++) {
                     const prev = channelReadings[i - 1].energy_total_wh
                     const curr = channelReadings[i].energy_total_wh
-
-                    // Ignore transitions from 0 (backfilled data) to real counters
                     if (prev === 0 || curr === 0) continue;
-
-                    // Only add if monotonic increase
                     if (curr >= prev) {
                         totalWh += (curr - prev)
                     } else {
-                        // Counter reset (rare, but possible if device replaced)
-                        // If delta is huge (negative), assume reset to 0+curr
                         totalWh += curr
                     }
                 }
-                return totalWh / 1000 // Convert to kWh
+                return totalWh / 1000
             }
 
             setTotals({
@@ -174,18 +200,22 @@ export function CombinedHistoryChart() {
 
 
             // 3. Build Unified Buckets (Dynamic Granularity)
-            // Today/Tomorrow = 1 min (Max resolution)
-            // History = 30 mins (Performance)
-            const bucketMinutes = (viewMode === "today" || viewMode === "tomorrow") ? 1 : 30
 
             const buckets = []
             const currentCursor = new Date(startDate)
 
+            // Map for quick lookup
             const readingsBySlot = new Map<number, any[]>()
             readings.forEach(r => {
-                const t = new Date(r.created_at)
+                // RPC returns 'bucket_time', Raw returns 'created_at'
+                const tStr = isLongView ? r.bucket_time : r.created_at
+                const t = new Date(tStr)
+
+                // Align to bucket
+                // If simple rounding needed:
                 const remainder = t.getMinutes() % bucketMinutes
                 t.setMinutes(t.getMinutes() - remainder, 0, 0)
+
                 const key = t.getTime()
                 if (!readingsBySlot.has(key)) readingsBySlot.set(key, [])
                 readingsBySlot.get(key)?.push(r)
@@ -209,8 +239,7 @@ export function CombinedHistoryChart() {
                     return slotTime >= from && slotTime < to
                 })
 
-                // Determine if Smart Slot (Lookup from pre-calculated map)
-                // We key by rateObj.valid_from time
+                // Determine if Smart Slot
                 let isSmart = false
                 if (rateObj) {
                     const rateTime = new Date(rateObj.valid_from).getTime()
@@ -218,11 +247,26 @@ export function CombinedHistoryChart() {
                 }
 
                 const slotReadings = readingsBySlot.get(slotTime) || []
-                const p0_vals = slotReadings.filter(r => r.channel === 0).map(r => r.power_w)
-                const p1_vals = slotReadings.filter(r => r.channel === 1).map(r => r.power_w)
 
-                const avg0 = p0_vals.length > 0 ? p0_vals.reduce((a, b) => a + b, 0) / p0_vals.length : null
-                const avg1 = p1_vals.length > 0 ? p1_vals.reduce((a, b) => a + b, 0) / p1_vals.length : null
+                // Extract power values based on mode
+                // RPC: avg_power
+                // Raw: power_w
+                let avg0 = null
+                let avg1 = null
+
+                if (isLongView) {
+                    // For RPC, we already have one row per channel hopefully
+                    const r0 = slotReadings.find(r => r.channel === 0)
+                    const r1 = slotReadings.find(r => r.channel === 1)
+                    avg0 = r0 ? r0.avg_power : 0 // Default to 0 for gaps in long view? Or null? 
+                    avg1 = r1 ? r1.avg_power : 0
+                } else {
+                    const p0_vals = slotReadings.filter(r => r.channel === 0).map(r => r.power_w)
+                    const p1_vals = slotReadings.filter(r => r.channel === 1).map(r => r.power_w)
+
+                    avg0 = p0_vals.length > 0 ? p0_vals.reduce((a, b) => a + b, 0) / p0_vals.length : null
+                    avg1 = p1_vals.length > 0 ? p1_vals.reduce((a, b) => a + b, 0) / p1_vals.length : null
+                }
 
                 buckets.push({
                     timestamp,

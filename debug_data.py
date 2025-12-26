@@ -12,13 +12,24 @@ headers = {
     "apikey": SUPABASE_KEY,
     "Authorization": f"Bearer {SUPABASE_KEY}"
 }
+from datetime import datetime, timedelta
 
-# Fetch readings from today
-url = f"{SUPABASE_URL}/rest/v1/energy_readings?select=created_at,energy_total_wh,channel&order=created_at.desc&limit=100"
+# Count all rows for last 7 days
+today = datetime.utcnow()
+seven_days_ago = today - timedelta(days=7)
+start_iso = seven_days_ago.isoformat()
 
-resp = requests.get(url, headers=headers)
-data = resp.json()
+print(f"Checking data since {start_iso}")
 
-print(f"Fetched {len(data)} rows.")
-for row in data[:20]:
-    print(f"Time: {row['created_at']} | Channel: {row['channel']} | TotalWh: {row['energy_total_wh']}")
+url = f"{SUPABASE_URL}/rest/v1/energy_readings?select=created_at&created_at=gte.{start_iso}&limit=1"
+r = requests.head(url, headers={**headers, "Prefer": "count=exact"})
+range_header = r.headers.get("Content-Range", "0-0/0")
+total = range_header.split('/')[-1] if '/' in range_header else "0"
+
+print(f"Total rows in last 7 days: {total}")
+
+results = {"total_7d": total}
+with open("results_7d.json", "w") as f:
+    json.dump(results, f, indent=2)
+
+
