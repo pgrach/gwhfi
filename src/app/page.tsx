@@ -1,5 +1,7 @@
 import { LiveStatus } from "@/components/dashboard/LiveStatus"
 import { CombinedHistoryChart } from "@/components/dashboard/CombinedHistoryChart"
+import { CurrentRate } from "@/components/dashboard/CurrentRate"
+import { ThemeToggle } from "@/components/ui/theme-toggle"
 import { Zap, Droplet } from "lucide-react"
 
 export default function DashboardPage() {
@@ -20,11 +22,14 @@ export default function DashboardPage() {
                         </p>
                     </div>
                 </div>
+                <ThemeToggle />
             </div>
             <div className="space-y-4">
+                <CurrentRate />
                 <LiveStatus />
                 <CombinedHistoryChart />
             </div>
         </div>
     )
 }
+
