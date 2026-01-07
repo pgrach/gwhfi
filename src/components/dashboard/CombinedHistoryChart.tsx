@@ -251,6 +251,8 @@ export function CombinedHistoryChart() {
                 // Extract power values based on mode
                 // RPC: avg_power
                 // Raw: power_w
+                // NOTE: With sparse data (0W readings skipped), we use null for missing data
+                // The chart's connectNulls will handle visualization
                 let avg0 = null
                 let avg1 = null
 
@@ -258,8 +260,8 @@ export function CombinedHistoryChart() {
                     // For RPC, we already have one row per channel hopefully
                     const r0 = slotReadings.find(r => r.channel === 0)
                     const r1 = slotReadings.find(r => r.channel === 1)
-                    avg0 = r0 ? r0.avg_power : 0 // Default to 0 for gaps in long view? Or null? 
-                    avg1 = r1 ? r1.avg_power : 0
+                    avg0 = r0 ? r0.avg_power : null
+                    avg1 = r1 ? r1.avg_power : null
                 } else {
                     const p0_vals = slotReadings.filter(r => r.channel === 0).map(r => r.power_w)
                     const p1_vals = slotReadings.filter(r => r.channel === 1).map(r => r.power_w)

@@ -36,6 +36,9 @@ SUPABASE_HEADERS = {
     "Prefer": "return=minimal"
 }
 
+# Track last readings to detect changes
+last_readings = {}
+
 def get_shelly_status(device_id):
     """Fetches device status from Shelly Cloud API."""
     url = f"{SHELLY_SERVER}/device/status"
@@ -64,30 +67,60 @@ def get_shelly_status(device_id):
 def process_reading():
     logger.info("Fetching Shelly Cloud Status...")
     status = get_shelly_status(SHELLY_DEVICE_ID)
-    
+
     if not status:
         return
 
     # Extract EMeter Data (Gen 1 usually has 'emeters' array)
     emeters = status.get("emeters", [])
-    
+
     rows_to_insert = []
-    
+
     for idx, emeter in enumerate(emeters):
         power = emeter.get("power", 0.0)
         voltage = emeter.get("voltage", 0.0)
         total = emeter.get("total", 0.0) # Wh
-        
-        row = {
-            "device_id": SHELLY_DEVICE_ID,
-            "channel": idx,
-            "power_w": power,
-            "voltage": voltage,
-            "energy_total_wh": total,
-            "created_at": datetime.utcnow().isoformat()
-        }
-        rows_to_insert.append(row)
-        logger.info(f"Channel {idx}: {power}W | {voltage}V | {total}Wh")
+
+        # Check if this reading should be recorded
+        channel_key = f"channel_{idx}"
+        last_reading = last_readings.get(channel_key, {})
+        last_power = last_reading.get("power", None)
+
+        # Only record if:
+        # 1. Power > 0 (heater is on)
+        # 2. Power changed from non-zero to zero (heater just turned off)
+        # 3. First reading (last_power is None)
+        should_record = False
+
+        if last_power is None:
+            # First reading ever
+            should_record = True
+            logger.info(f"Channel {idx}: {power}W | {voltage}V | {total}Wh [FIRST READING]")
+        elif power > 0:
+            # Heater is on - always record
+            should_record = True
+            logger.info(f"Channel {idx}: {power}W | {voltage}V | {total}Wh [ACTIVE]")
+        elif last_power > 0 and power == 0:
+            # Just turned off - record the off event
+            should_record = True
+            logger.info(f"Channel {idx}: {power}W | {voltage}V | {total}Wh [TURNED OFF]")
+        else:
+            # Still off - skip recording
+            logger.info(f"Channel {idx}: {power}W | {voltage}V | {total}Wh [SKIPPED - OFF]")
+
+        # Update last reading tracker
+        last_readings[channel_key] = {"power": power, "voltage": voltage, "total": total}
+
+        if should_record:
+            row = {
+                "device_id": SHELLY_DEVICE_ID,
+                "channel": idx,
+                "power_w": power,
+                "voltage": voltage,
+                "energy_total_wh": total,
+                "created_at": datetime.utcnow().isoformat()
+            }
+            rows_to_insert.append(row)
 
     if rows_to_insert:
         try:
@@ -99,6 +132,8 @@ def process_reading():
             logger.error(f"❌ Supabase Insert Failed: {e}")
             if 'response' in locals():
                 logger.error(f"Response: {response.text}")
+    else:
+        logger.info("⏭️  No readings to insert (all channels off)")
 
 if __name__ == "__main__":
     logger.info("Starting Shelly Cloud -> Supabase Worker (REST Mode)")
