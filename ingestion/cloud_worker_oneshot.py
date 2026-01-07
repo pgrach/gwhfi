@@ -51,14 +51,14 @@ def get_shelly_status(device_id):
 def process_reading():
     logger.info("Fetching Shelly Cloud Status...")
     status = get_shelly_status(SHELLY_DEVICE_ID)
-    
+
     if not status:
         logger.error("No status returned.")
         return
 
     emeters = status.get("emeters", [])
     rows_to_insert = []
-    
+
     for idx, emeter in enumerate(emeters):
         row = {
             "device_id": SHELLY_DEVICE_ID,

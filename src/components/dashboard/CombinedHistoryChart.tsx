@@ -87,28 +87,16 @@ export function CombinedHistoryChart() {
             // Today/Tomorrow = 1 min (Raw data)
             // 7d = 1 hour (Aggregated)
             // 30d = 1 hour (Aggregated) or maybe 4 hours? Let's try 1h first.
-            const isLongView = viewMode === "7d" || viewMode === "30d"
-            const bucketMinutes = isLongView ? 60 : 1
+            // ALWAYS use RPC downsampling to avoid Supabase's 1000-row limit
+            const bucketMinutes = (viewMode === "today" || viewMode === "tomorrow") ? 5 : 60
+            const isLongView = viewMode === "7d" || viewMode === "30d" // Keep for compatibility with data processing
 
-            let readingsPromise;
-
-            if (isLongView) {
-                // Use RPC for downsampling
-                readingsPromise = supabase
-                    .rpc('get_downsampled_readings', {
-                        start_time: startIso,
-                        end_time: endIso,
-                        bucket_seconds: bucketMinutes * 60
-                    })
-            } else {
-                // Use Raw Data
-                readingsPromise = supabase
-                    .from("energy_readings")
-                    .select("*")
-                    .gte("created_at", startIso)
-                    .lte("created_at", endIso)
-                    .order("created_at", { ascending: true }) // Back to ascending for raw data as we don't have limit issue with short ranges
-            }
+            const readingsPromise = supabase
+                .rpc('get_downsampled_readings', {
+                    start_time: startIso,
+                    end_time: endIso,
+                    bucket_seconds: bucketMinutes * 60
+                })
 
             try {
                 const [rData, sData] = await Promise.all([ratesPromise, readingsPromise])
@@ -134,11 +122,11 @@ export function CombinedHistoryChart() {
             // Track last update time from most recent reading
             if (readings.length > 0) {
                 const latestReading = readings.reduce((latest, current) => {
-                    const currentTime = new Date(isLongView ? current.bucket_time : current.created_at)
-                    const latestTime = new Date(isLongView ? latest.bucket_time : latest.created_at)
+                    const currentTime = new Date(current.bucket_time)
+                    const latestTime = new Date(latest.bucket_time)
                     return currentTime > latestTime ? current : latest
                 })
-                setLastUpdate(new Date(isLongView ? latestReading.bucket_time : latestReading.created_at))
+                setLastUpdate(new Date(latestReading.bucket_time))
             }
 
             // --- Calculate Totals (kWh) ---
@@ -149,28 +137,10 @@ export function CombinedHistoryChart() {
             // Let's mock totals for now if RPC, or calculate from averages (avg power W * hours = Wh).
 
             const calculateKWh = (channelId: number) => {
-                if (isLongView) {
-                    // Sum of (avg_power * 1 hour)
-                    const channelReadings = readings.filter(r => r.channel === channelId)
-                    const totalWh = channelReadings.reduce((sum, r) => sum + (r.avg_power || 0), 0)
-                    // Since bucket is 1 hour, Average Watts * 1 Hour = Watt-Hours.
-                    return totalWh / 1000
-                }
-
-                // ... Original logic for raw data ...
+                // Always using RPC now, calculate from avg_power
                 const channelReadings = readings.filter(r => r.channel === channelId)
-                if (channelReadings.length < 2) return 0
-                let totalWh = 0
-                for (let i = 1; i < channelReadings.length; i++) {
-                    const prev = channelReadings[i - 1].energy_total_wh
-                    const curr = channelReadings[i].energy_total_wh
-                    if (prev === 0 || curr === 0) continue;
-                    if (curr >= prev) {
-                        totalWh += (curr - prev)
-                    } else {
-                        totalWh += curr
-                    }
-                }
+                const hours = bucketMinutes / 60
+                const totalWh = channelReadings.reduce((sum, r) => sum + ((r.avg_power || 0) * hours), 0)
                 return totalWh / 1000
             }
 
@@ -219,12 +189,10 @@ export function CombinedHistoryChart() {
             // Map for quick lookup
             const readingsBySlot = new Map<number, any[]>()
             readings.forEach(r => {
-                // RPC returns 'bucket_time', Raw returns 'created_at'
-                const tStr = isLongView ? r.bucket_time : r.created_at
-                const t = new Date(tStr)
+                // Always using RPC now, so always use bucket_time
+                const t = new Date(r.bucket_time)
 
                 // Align to bucket
-                // If simple rounding needed:
                 const remainder = t.getMinutes() % bucketMinutes
                 t.setMinutes(t.getMinutes() - remainder, 0, 0)
 
@@ -268,19 +236,11 @@ export function CombinedHistoryChart() {
                 let avg0 = null
                 let avg1 = null
 
-                if (isLongView) {
-                    // For RPC, we already have one row per channel hopefully
-                    const r0 = slotReadings.find(r => r.channel === 0)
-                    const r1 = slotReadings.find(r => r.channel === 1)
-                    avg0 = r0 ? r0.avg_power : null
-                    avg1 = r1 ? r1.avg_power : null
-                } else {
-                    const p0_vals = slotReadings.filter(r => r.channel === 0).map(r => r.power_w)
-                    const p1_vals = slotReadings.filter(r => r.channel === 1).map(r => r.power_w)
-
-                    avg0 = p0_vals.length > 0 ? p0_vals.reduce((a, b) => a + b, 0) / p0_vals.length : null
-                    avg1 = p1_vals.length > 0 ? p1_vals.reduce((a, b) => a + b, 0) / p1_vals.length : null
-                }
+                // Always using RPC now, so always use avg_power
+                const r0 = slotReadings.find(r => r.channel === 0)
+                const r1 = slotReadings.find(r => r.channel === 1)
+                avg0 = r0 ? r0.avg_power : null
+                avg1 = r1 ? r1.avg_power : null
 
                 buckets.push({
                     timestamp,
