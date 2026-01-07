@@ -43,6 +43,11 @@ export async function GET(request: NextRequest) {
   console.log('🔄 Polling Shelly device for data...');
 
   if (!SHELLY_DEVICE_ID || !SHELLY_AUTH_KEY || !SHELLY_SERVER) {
+    console.error('Missing env vars:', {
+      hasDeviceId: !!SHELLY_DEVICE_ID,
+      hasAuthKey: !!SHELLY_AUTH_KEY,
+      hasServer: !!SHELLY_SERVER
+    });
     return NextResponse.json(
       { error: 'Missing Shelly configuration' },
       { status: 500 }
