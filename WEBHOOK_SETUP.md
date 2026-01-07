@@ -13,14 +13,12 @@ This guide explains how to configure your Shelly device to send real-time data u
 
 Your webhook endpoint is:
 ```
-https://your-railway-app.railway.app/api/webhook/shelly
+https://gwhfi.com/api/webhook/shelly
 ```
-
-Replace `your-railway-app` with your actual Railway deployment URL.
 
 You can test if the endpoint is working by visiting:
 ```
-https://your-railway-app.railway.app/api/webhook/shelly
+https://gwhfi.com/api/webhook/shelly
 ```
 It should return: `{"status":"ok","message":"Shelly webhook endpoint is ready",...}`
 
@@ -38,7 +36,7 @@ It should return: `{"status":"ok","message":"Shelly webhook endpoint is ready",.
 
 3. **Add a new webhook action**
    - **Trigger/Event**: Set to trigger on power change or periodic report
-   - **URL**: Enter your webhook URL: `https://your-railway-app.railway.app/api/webhook/shelly`
+   - **URL**: Enter your webhook URL: `https://gwhfi.com/api/webhook/shelly`
    - **Method**: POST
    - **Condition**: (Optional) Set minimum interval to avoid too many requests (e.g., every 5-10 seconds)
 
@@ -86,7 +84,7 @@ For Shelly Gen2 devices, you can use scripts:
 ```javascript
 // Script to send periodic updates every 10 seconds
 let CONFIG = {
-  webhookUrl: "https://your-railway-app.railway.app/api/webhook/shelly",
+  webhookUrl: "https://gwhfi.com/api/webhook/shelly",
   interval: 10000 // 10 seconds
 };
 
@@ -157,7 +155,7 @@ SHELLY_DEVICE_ID=your_shelly_device_id
 
 3. **Test the webhook manually** (optional)
    ```bash
-   curl -X POST https://your-railway-app.railway.app/api/webhook/shelly \
+   curl -X POST https://gwhfi.com/api/webhook/shelly \
      -H "Content-Type: application/json" \
      -d '{
        "id": "test-device",
@@ -209,7 +207,7 @@ if (providedSecret !== webhookSecret) {
 }
 ```
 
-Then use URL: `https://your-app.railway.app/api/webhook/shelly?secret=YOUR_SECRET`
+Then use URL: `https://gwhfi.com/api/webhook/shelly?secret=YOUR_SECRET`
 
 ## What Happens to cloud_worker.py?
 
