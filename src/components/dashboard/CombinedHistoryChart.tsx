@@ -12,7 +12,8 @@ import {
     CartesianGrid,
     Tooltip,
     Legend,
-    ResponsiveContainer
+    ResponsiveContainer,
+    ReferenceArea
 } from "recharts"
 
 interface Rate {
@@ -25,11 +26,12 @@ export function CombinedHistoryChart() {
     const [data, setData] = useState<any[]>([])
     // 0 = Today (Midnight to Midnight)
     // 1 = Last 24h? No, let's stick to "Days History".
-    // Let's redefine: 1 = Today+Yesterday? 
+    // Let's redefine: 1 = Today+Yesterday?
     // User wants "24h". Let's assume "Today" view (00:00 - 23:59).
     const [viewMode, setViewMode] = useState<"today" | "tomorrow" | "7d" | "30d">("today")
     const [hasRates, setHasRates] = useState(true)
     const [totals, setTotals] = useState({ peak: 0, offPeak: 0 })
+    const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
 
     // Configuration for Octopus
     const PRODUCT = "AGILE-18-02-21"
@@ -127,6 +129,16 @@ export function CombinedHistoryChart() {
             } catch (e) {
                 console.error("Fetch error", e)
                 setHasRates(false)
+            }
+
+            // Track last update time from most recent reading
+            if (readings.length > 0) {
+                const latestReading = readings.reduce((latest, current) => {
+                    const currentTime = new Date(isLongView ? current.bucket_time : current.created_at)
+                    const latestTime = new Date(isLongView ? latest.bucket_time : latest.created_at)
+                    return currentTime > latestTime ? current : latest
+                })
+                setLastUpdate(new Date(isLongView ? latestReading.bucket_time : latestReading.created_at))
             }
 
             // --- Calculate Totals (kWh) ---
@@ -288,6 +300,29 @@ export function CombinedHistoryChart() {
         fetchData()
     }, [viewMode])
 
+    // Identify "off" periods for shading (both heaters at 0W or null)
+    const offPeriods: Array<{ start: string; end: string }> = []
+    let offStart: string | null = null
+
+    data.forEach((point, idx) => {
+        const isBothOff = (point.power_0 === null || point.power_0 === 0) &&
+                          (point.power_1 === null || point.power_1 === 0)
+
+        if (isBothOff && offStart === null) {
+            // Start of off period
+            offStart = point.timestamp
+        } else if (!isBothOff && offStart !== null) {
+            // End of off period
+            offPeriods.push({ start: offStart, end: data[idx - 1]?.timestamp || offStart })
+            offStart = null
+        }
+    })
+
+    // Close any open off period at the end
+    if (offStart !== null && data.length > 0) {
+        offPeriods.push({ start: offStart, end: data[data.length - 1].timestamp })
+    }
+
     // Custom Dot for Smart Slots (Only show every 30 mins to avoid clutter)
     const SmartDot = (props: any) => {
         const { cx, cy, payload } = props;
@@ -327,11 +362,39 @@ export function CombinedHistoryChart() {
         )
     }
 
+    // Helper to format time ago
+    const formatTimeAgo = (date: Date | null) => {
+        if (!date) return "Never"
+        const seconds = Math.floor((new Date().getTime() - date.getTime()) / 1000)
+        if (seconds < 60) return `${seconds}s ago`
+        const minutes = Math.floor(seconds / 60)
+        if (minutes < 60) return `${minutes}m ago`
+        const hours = Math.floor(minutes / 60)
+        if (hours < 24) return `${hours}h ago`
+        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    }
+
+    const systemStatus = lastUpdate && (new Date().getTime() - lastUpdate.getTime()) < 120000 ? "active" : "stale"
+
     return (
         <Card className="col-span-4">
             <CardHeader className="flex flex-col space-y-4 sm:flex-row sm:items-center sm:justify-between sm:space-y-0 pb-2">
                 <div className="space-y-1">
-                    <CardTitle className="text-xl sm:text-2xl">Combined History</CardTitle>
+                    <div className="flex items-center gap-3">
+                        <CardTitle className="text-xl sm:text-2xl">Combined History</CardTitle>
+                        {lastUpdate && (
+                            <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
+                                systemStatus === "active"
+                                    ? "bg-green-500/10 text-green-600 border border-green-500/20"
+                                    : "bg-orange-500/10 text-orange-600 border border-orange-500/20"
+                            }`}>
+                                <div className={`w-1.5 h-1.5 rounded-full ${
+                                    systemStatus === "active" ? "bg-green-500" : "bg-orange-500"
+                                } animate-pulse`} />
+                                <span>Updated {formatTimeAgo(lastUpdate)}</span>
+                            </div>
+                        )}
+                    </div>
                     <CardDescription className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-0">
                         <span>Total Consumption:</span>
                         <span className="hidden sm:inline text-muted-foreground mx-2">|</span>
@@ -354,6 +417,20 @@ export function CombinedHistoryChart() {
                     <ResponsiveContainer width="100%" height="100%">
                         <LineChart data={data}>
                             <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+
+                            {/* Shade off periods */}
+                            {offPeriods.map((period, idx) => (
+                                <ReferenceArea
+                                    key={`off-${idx}`}
+                                    x1={period.start}
+                                    x2={period.end}
+                                    yAxisId="right"
+                                    fill="#64748b"
+                                    fillOpacity={0.08}
+                                    strokeOpacity={0}
+                                />
+                            ))}
+
                             <XAxis
                                 dataKey="timestamp"
                                 stroke="#888888"
