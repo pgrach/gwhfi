@@ -376,6 +376,34 @@ export function CombinedHistoryChart() {
 
     const systemStatus = lastUpdate && (new Date().getTime() - lastUpdate.getTime()) < 120000 ? "active" : "stale"
 
+    // Find current time position for vertical highlight
+    const now = new Date()
+    let currentTimestamp = null
+
+    if (data.length > 0) {
+        // Find the closest data point to current time
+        const nowTime = now.getTime()
+        let closestPoint = data[0]
+        let minDiff = Math.abs(data[0].raw_time - nowTime)
+
+        for (const point of data) {
+            const diff = Math.abs(point.raw_time - nowTime)
+            if (diff < minDiff) {
+                minDiff = diff
+                closestPoint = point
+            }
+            // If we've passed "now", break early
+            if (point.raw_time > nowTime) break
+        }
+
+        // Only show if the closest point is reasonably close to now
+        // (within the view period)
+        const maxDiff = viewMode === "today" || viewMode === "tomorrow" ? 60000 : 3600000
+        if (minDiff < maxDiff) {
+            currentTimestamp = closestPoint
+        }
+    }
+
     return (
         <Card className="col-span-4">
             <CardHeader className="flex flex-col space-y-4 sm:flex-row sm:items-center sm:justify-between sm:space-y-0 pb-2">
@@ -430,6 +458,36 @@ export function CombinedHistoryChart() {
                                     strokeOpacity={0}
                                 />
                             ))}
+
+                            {/* Current time indicator - only show for today and 7d/30d views */}
+                            {currentTimestamp && (viewMode === "today" || viewMode === "7d" || viewMode === "30d") && (() => {
+                                // Find the index of the current timestamp in data array
+                                const currentIndex = data.findIndex(d => d.timestamp === currentTimestamp.timestamp)
+
+                                // Create a narrow band around the current time (use adjacent points for x1 and x2)
+                                const x1 = currentIndex > 0 ? data[currentIndex - 1].timestamp : currentTimestamp.timestamp
+                                const x2 = currentIndex < data.length - 1 ? data[currentIndex + 1].timestamp : currentTimestamp.timestamp
+
+                                return (
+                                    <ReferenceArea
+                                        x1={x1}
+                                        x2={x2}
+                                        yAxisId="left"
+                                        fill="#3b82f6"
+                                        fillOpacity={0.15}
+                                        stroke="#3b82f6"
+                                        strokeWidth={2}
+                                        strokeOpacity={0.5}
+                                        label={{
+                                            value: "NOW",
+                                            position: "top",
+                                            fill: "#3b82f6",
+                                            fontSize: 11,
+                                            fontWeight: 700
+                                        }}
+                                    />
+                                )
+                            })()}
 
                             <XAxis
                                 dataKey="timestamp"
