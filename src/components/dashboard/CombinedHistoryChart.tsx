@@ -34,7 +34,7 @@ export function CombinedHistoryChart() {
     const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
 
     // Configuration for Octopus
-    const PRODUCT = "AGILE-18-02-21"
+    const PRODUCT = "AGILE-24-10-01"
     const REGION = "C" // London
     const TARIFF = `E-1R-${PRODUCT}-${REGION}`
 
@@ -464,6 +464,7 @@ export function CombinedHistoryChart() {
                                 fontSize={12}
                                 tickLine={false}
                                 axisLine={false}
+                                domain={[0, 'dataMax + 5']}
                                 tickFormatter={(value) => `${value}p`}
                                 label={{ value: 'Price (p/kWh)', angle: -90, position: 'insideLeft', fill: '#f050f8' }}
                             />
