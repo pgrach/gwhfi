@@ -88,7 +88,7 @@ export function CombinedHistoryChart() {
             // 7d = 1 hour (Aggregated)
             // 30d = 1 hour (Aggregated) or maybe 4 hours? Let's try 1h first.
             // ALWAYS use RPC downsampling to avoid Supabase's 1000-row limit
-            const bucketMinutes = (viewMode === "today" || viewMode === "tomorrow") ? 5 : 60
+            const bucketMinutes = (viewMode === "today" || viewMode === "tomorrow") ? 1 : 60
             const isLongView = viewMode === "7d" || viewMode === "30d" // Keep for compatibility with data processing
 
             const readingsPromise = supabase

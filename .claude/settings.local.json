@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cat:*)",
+      "Bash(git -C \"c:\\\\Users\\\\gpu20\\\\OneDrive\\\\Desktop\\\\AIDALA\\\\Code\\\\Smart_water\" show 0f0904d)"
+    ]
+  }
+}
