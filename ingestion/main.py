@@ -4,6 +4,7 @@ import schedule
 from datetime import datetime, timedelta
 from config import Config
 from services.time_service import TimeService
+from services.shelly_manager import ShellyManager
 from tuya_manager import TuyaManager
 from octopus_client import OctopusClient
 
@@ -24,19 +25,28 @@ class SmartWaterController:
         logger.info(f"Initializing Smart Water Controller (Dry Run: {self.dry_run})")
         
         self.time_service = TimeService()
+        
         self.tuya = TuyaManager()
         if not getattr(self.tuya, 'enabled', True):
-            logger.warning("Tuya Manager disabled due to missing config. Running in Data-Only mode.")
+            logger.warning("Tuya Manager disabled due to missing config.")
+            
+        self.shelly = ShellyManager()
+        if not self.shelly.enabled:
+            logger.warning("Shelly Manager disabled. Smart Cooldown will NOT function.")
         
         self.octopus = OctopusClient(Config.OCTOPUS_PRODUCT_CODE, Config.OCTOPUS_REGION_CODE)
         
         self.main_heater_slots = []
         self.second_heater_slots = []
         
+        self.cooldown_until = None
+        
         # State storage for UI
         self.system_state = {
             "peak_heater": {"online": False, "state": "UNKNOWN"},
             "off_peak_heater": {"online": False, "state": "UNKNOWN"},
+            "cooldown_mode": False,
+            "cooldown_until": None,
             "last_updated": None,
             "next_schedule_update": None,
             "rates": []
@@ -48,8 +58,32 @@ class SmartWaterController:
             logger.error("System clock is unreliable! Aborting startup.")
             raise SystemExit("Unreliable system clock")
 
+    def _get_window_slots(self, rates, start_hour, end_hour, hours_needed):
+        """
+        Finds the cheapest slots within a specific daily window.
+        start_hour: int (0-23)
+        end_hour: int (0-23)
+        """
+        # Filter rates for the target window
+        window_rates = []
+        for r in rates:
+            # We need to handle windows that cross midnight if needed (not needed for current spec)
+            # Current spec: 00-07, 12-16, 19-23
+            
+            # Check if rate falls within window
+            # We need to be careful with "valid_from" being today vs tomorrow
+            # Simplification: Just check the hour component of valid_from
+            h = r['valid_from'].hour
+            if start_hour <= h < end_hour:
+                window_rates.append(r)
+                
+        if not window_rates:
+            return []
+            
+        return self.octopus.find_cheapest_blocks(window_rates, hours_needed)
+
     def update_schedule(self):
-        """Fetches rates and calculates heating slots."""
+        """Fetches rates and calculates heating slots based on 3-Window Strategy."""
         logger.info("Updating schedule from Octopus Energy...")
         rates = self.octopus.get_rates()
         
@@ -57,36 +91,39 @@ class SmartWaterController:
             logger.error("Failed to fetch rates. Retaining old schedule if exists.")
             return
 
-        # Filter out past rates (keep only slots that end in the future)
+        # Filter out past rates
         now = self.time_service.now()
         future_rates = [r for r in rates if r['valid_to'] > now]
 
         if not future_rates:
             logger.warning("No future rates found! Waiting for next update.")
             return
-
-        # Off-Peak Heater: Smart Daily Analysis (Below Average)
-        # cheapest = self.octopus.find_cheapest_blocks(future_rates, Config.MAIN_HEATER_DURATION_HOURS)
-        # self.main_heater_slots = cheapest
+            
+        # --- 3-WINDOW STRATEGY ---
+        # 1. Night (00:00 - 07:00): 2 Hours
+        night_slots = self._get_window_slots(future_rates, 0, 7, 2.0)
         
-        smart_daily = self.octopus.find_smart_daily_slots(future_rates)
-        self.main_heater_slots = smart_daily
+        # 2. Afternoon (12:00 - 16:00): 1 Hour
+        afternoon_slots = self._get_window_slots(future_rates, 12, 16, 1.0)
         
-        # Peak Heater: Below threshold
+        # 3. Evening (19:00 - 23:59): 1 Hour (Recovery)
+        evening_slots = self._get_window_slots(future_rates, 19, 24, 1.0)
+        
+        # Combine
+        self.main_heater_slots = night_slots + afternoon_slots + evening_slots
+        self.main_heater_slots.sort(key=lambda x: x['valid_from']) # Keep sorted
+        
+        # Peak Heater: Standard Negative Logic
         negative = self.octopus.get_negative_rates(future_rates, Config.SECOND_HEATER_THRESHOLD)
         self.second_heater_slots = negative
         
         # Update UI state
-        self.system_state["rates"] = rates  # Store all rates for graph if needed
+        self.system_state["rates"] = rates
         self.system_state["next_schedule_update"] = (datetime.now() + timedelta(hours=6)).strftime("%H:%M")
         
-        logger.info(f"Scheduled Peak Heater Slots: {len(self.second_heater_slots)}")
-        for slot in self.second_heater_slots:
-            logger.info(f"  Peak: {slot['valid_from']} - {slot['valid_to']} ({slot['value_inc_vat']}p)")
-
-        logger.info(f"Scheduled Off-Peak Heater Slots: {len(self.main_heater_slots)}")
+        logger.info(f"--- Updated Schedule ({len(self.main_heater_slots)} slots) ---")
         for slot in self.main_heater_slots:
-            logger.info(f"  Off-Peak: {slot['valid_from']} - {slot['valid_to']} ({slot['value_inc_vat']}p)")
+            logger.info(f"  [Off-Peak] {slot['valid_from'].strftime('%H:%M')} - {slot['valid_to'].strftime('%H:%M')} ({slot['value_inc_vat']}p)")
 
     def is_in_slot(self, slots, current_time):
         """Checks if current_time is within any of the provided slots."""
@@ -100,19 +137,52 @@ class SmartWaterController:
         now_utc = self.time_service.now()
         self.system_state["last_updated"] = now_utc.strftime("%Y-%m-%d %H:%M:%S")
         
+        # Updates for UI
+        self.system_state["cooldown_mode"] = False
+        if self.cooldown_until:
+            if now_utc < self.cooldown_until:
+                self.system_state["cooldown_mode"] = True
+                self.system_state["cooldown_until"] = self.cooldown_until.isoformat()
+            else:
+                # Cooldown expired
+                logger.info("ℹ️ Smart Cooldown Expired. Resuming normal operation.")
+                self.cooldown_until = None
+                self.system_state["cooldown_until"] = None
+
         # 1. Peak Heater Control (Device MAIN, Negative Slots)
+        # Note: Peak heater ignores cooldown logic for now (it's free energy strategy)
         active_peak, slot_peak = self.is_in_slot(self.second_heater_slots, now_utc)
         self.apply_device_state(Config.TUYA_DEVICE_ID_MAIN, active_peak, "Peak Heater", slot_peak)
 
-        # 2. Off-Peak Heater Control (Device SECOND, Daily Slots)
-        if Config.TUYA_DEVICE_ID_SECOND:
-            active_offpeak, slot_offpeak = self.is_in_slot(self.main_heater_slots, now_utc)
-            self.apply_device_state(Config.TUYA_DEVICE_ID_SECOND, active_offpeak, "Off-Peak Heater", slot_offpeak)
+        # 2. Off-Peak Heater Control (Device SECOND, Windows)
+        active_offpeak, slot_offpeak = self.is_in_slot(self.main_heater_slots, now_utc)
+        
+        # --- Smart Cooldown Logic ---
+        if active_offpeak and self.cooldown_until:
+             # We should be ON, but Cooldown is active -> FORCE OFF
+             active_offpeak = False
+             slot_offpeak = None # Clear slot info to avoid confusing logs
+             # logger.debug("Skipping heating slot due to Cooldown.")
+             
+        elif active_offpeak and not self.cooldown_until:
+            # We are ON. Check Power Consumption.
+            # Using Channel 1 for Off-Peak Heater (implied from context)
+            power = self.shelly.get_power(channel=1) 
             
-        # Update cached state explicitly for UI if apply_device_state didn't trigger health check type logic
-        # Ideally, we rely on periodic perform_health_check for "Online" status, but here we know the "Target" state.
-        # Let's trust perform_health_check for truth, but maybe update "Target" here?
-        # For simplicity, we'll let perform_health_check handle the bulk of "State" truth.
+            if power is not None:
+                # Threshold: 10W (to be safe even if standby is 1-2W)
+                if power < 10: 
+                    logger.info(f"📉 Tank Full Detected (Power: {power}W). Triggering Smart Cooldown.")
+                    # Set 90 minute cooldown
+                    self.cooldown_until = now_utc + timedelta(minutes=90)
+                    active_offpeak = False # Turn off immediately
+                else:
+                    # Log occasionally?
+                    pass
+            else:
+                logger.warning("Failed to read power. Cannot verify Tank Full status.")
+
+        self.apply_device_state(Config.TUYA_DEVICE_ID_SECOND, active_offpeak, "Off-Peak Heater", slot_offpeak)
 
     def apply_device_state(self, device_id, target_state, device_name, slot_info=None):
         """Applies state to device if needed."""
@@ -137,6 +207,10 @@ class SmartWaterController:
         if is_on != target_state:
             action = "Turning ON" if target_state else "Turning OFF"
             reason = f"Slot: {slot_info['value_inc_vat']}p until {slot_info['valid_to']}" if slot_info else "No active slot"
+            
+            if not target_state and self.cooldown_until:
+                reason = "Smart Cooldown Active"
+                
             logger.info(f"{action} {device_name} ({reason})")
             
             if not self.dry_run:
@@ -153,11 +227,6 @@ class SmartWaterController:
         """Checks and prints the health status of all devices."""
         logger.info("--- PERFORMING DEVICE HEALTH CHECK ---")
         
-        if not getattr(self.tuya, 'enabled', True):
-            logger.warning("⚠️ Control Logic DISABLED (Configuration Missing)")
-            logger.info("--- HEALTH CHECK SKIPPED ---\n")
-            return
-
         devices = [
             ("Peak Heater", Config.TUYA_DEVICE_ID_MAIN, "peak_heater"),
             ("Off-Peak Heater", Config.TUYA_DEVICE_ID_SECOND, "off_peak_heater")
@@ -188,7 +257,6 @@ class SmartWaterController:
         
     def get_state(self):
         """Returns the current system state for UI."""
-        # Enrich with schedule info
         return {
             "status": self.system_state,
             "schedule": {
@@ -200,13 +268,9 @@ class SmartWaterController:
     def run(self):
         # 1. Verification on startup
         self.perform_health_check()
-        
         self.update_schedule()
         
-        # Schedule rate updates every 6 hours
         schedule.every(6).hours.do(self.update_schedule)
-        
-        # Schedule health check every hour
         schedule.every(1).hours.do(self.perform_health_check)
         
         logger.info("Starting Control Loop (Press Ctrl+C to stop)")
@@ -217,7 +281,6 @@ class SmartWaterController:
                     self.control_loop()
                 except Exception as e:
                     logger.error(f"CRITICAL ERROR in control loop: {e}", exc_info=True)
-                    # Sleep a bit to avoid rapid-fire error loops
                     time.sleep(5)
                 
                 time.sleep(60) # Check every minute

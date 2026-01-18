@@ -9,7 +9,13 @@ class Config:
     TUYA_ACCESS_KEY = os.getenv('TUYA_ACCESS_KEY')
     TUYA_REGION = os.getenv('TUYA_REGION', 'eu')
     TUYA_DEVICE_ID_MAIN = os.getenv('TUYA_DEVICE_ID_MAIN')
+    TUYA_DEVICE_ID_MAIN = os.getenv('TUYA_DEVICE_ID_MAIN')
     TUYA_DEVICE_ID_SECOND = os.getenv('TUYA_DEVICE_ID_SECOND')
+
+    # Shelly
+    SHELLY_AUTH_KEY = os.getenv("SHELLY_CLOUD_AUTH_KEY")
+    SHELLY_SERVER = os.getenv("SHELLY_CLOUD_SERVER")
+    SHELLY_DEVICE_ID = os.getenv("SHELLY_DEVICE_ID")
 
     # Octopus
     OCTOPUS_PRODUCT_CODE = os.getenv('OCTOPUS_PRODUCT_CODE', 'AGILE-18-02-21')
