@@ -22,6 +22,13 @@ interface Rate {
     valid_to: string
 }
 
+interface ScheduleSlot {
+    slot_start: string
+    slot_end: string
+    price: number
+    heater_type: string
+}
+
 export function CombinedHistoryChart() {
     const [data, setData] = useState<any[]>([])
     // 0 = Today (Midnight to Midnight)
@@ -42,7 +49,6 @@ export function CombinedHistoryChart() {
         const fetchData = async () => {
 
             // 1. Define Timeline Boundaries
-            const now = new Date()
             let startDate = new Date()
             let endDate = new Date()
 
@@ -77,6 +83,7 @@ export function CombinedHistoryChart() {
             // 2. Fetch Data
             let rates: Rate[] = []
             let readings: any[] = []
+            let scheduleSlots: ScheduleSlot[] = []
 
             // Explicitly ensure we fetch enough future data if viewing tomorrow
             const ratesPromise = fetch(
@@ -89,7 +96,6 @@ export function CombinedHistoryChart() {
             // 30d = 1 hour (Aggregated) or maybe 4 hours? Let's try 1h first.
             // ALWAYS use RPC downsampling to avoid Supabase's 1000-row limit
             const bucketMinutes = (viewMode === "today" || viewMode === "tomorrow") ? 1 : 60
-            const isLongView = viewMode === "7d" || viewMode === "30d" // Keep for compatibility with data processing
 
             const readingsPromise = supabase
                 .rpc('get_downsampled_readings', {
@@ -98,8 +104,16 @@ export function CombinedHistoryChart() {
                     bucket_seconds: bucketMinutes * 60
                 })
 
+            // Fetch scheduled heating slots from Supabase
+            const schedulePromise = supabase
+                .from('heating_schedule')
+                .select('*')
+                .gte('slot_start', startIso)
+                .lte('slot_end', endIso)
+                .order('slot_start', { ascending: true })
+
             try {
-                const [rData, sData] = await Promise.all([ratesPromise, readingsPromise])
+                const [rData, sData, schedData] = await Promise.all([ratesPromise, readingsPromise, schedulePromise])
                 if (rData.results) {
                     rates = rData.results
                     if (rates.length === 0 && viewMode === "tomorrow") {
@@ -113,6 +127,13 @@ export function CombinedHistoryChart() {
                     readings = sData.data
                 } else if (sData.error) {
                     console.error("Supabase Error:", sData.error)
+                }
+
+                if (schedData.data) {
+                    scheduleSlots = schedData.data
+                    console.log("Scheduled heating slots:", scheduleSlots.length)
+                } else if (schedData.error) {
+                    console.error("Schedule fetch error:", schedData.error)
                 }
             } catch (e) {
                 console.error("Fetch error", e)
@@ -150,34 +171,24 @@ export function CombinedHistoryChart() {
             })
             // -----------------------------
 
-            // --- Pre-process Rates for "Smart Daily" Logic ---
-            // 1. Group rates by UTC Day
-            const ratesByDay = new Map<string, Rate[]>()
-            rates.forEach(r => {
-                // Ensure we use the date part of valid_from
-                const day = r.valid_from.split('T')[0]
-                if (!ratesByDay.has(day)) ratesByDay.set(day, [])
-                ratesByDay.get(day)?.push(r)
+            // --- Build Schedule Map for "Scheduled Heating" visualization ---
+            // Create a Set of timestamps where heating is scheduled
+            // This replaces the old "below average" logic with actual scheduled slots
+            const scheduledMap = new Map<number, boolean>()
+
+            scheduleSlots.forEach(slot => {
+                const slotStart = new Date(slot.slot_start).getTime()
+                const slotEnd = new Date(slot.slot_end).getTime()
+
+                // Mark every 30-min boundary within this slot as scheduled
+                let t = slotStart
+                while (t < slotEnd) {
+                    scheduledMap.set(t, true)
+                    t += 30 * 60 * 1000 // 30 minutes in ms
+                }
             })
 
-            // 2. Calculate thresholds and tag "Smart" slots
-            // We'll create a Map of "Timestamp -> isSmart" for O(1) lookup
-            const smartMap = new Map<number, boolean>()
-
-            ratesByDay.forEach((dayRates, dayKey) => {
-                if (dayRates.length === 0) return
-
-                // Calculate average for THIS day
-                const sum = dayRates.reduce((a, b) => a + b.value_inc_vat, 0)
-                const avg = sum / dayRates.length
-
-                // Tag slots
-                dayRates.forEach(r => {
-                    const isSmart = r.value_inc_vat <= avg
-                    const t = new Date(r.valid_from).getTime()
-                    smartMap.set(t, isSmart)
-                })
-            })
+            console.log("Scheduled time slots marked:", scheduledMap.size)
             // -------------------------------------------------
 
 
@@ -219,12 +230,10 @@ export function CombinedHistoryChart() {
                     return slotTime >= from && slotTime < to
                 })
 
-                // Determine if Smart Slot
-                let isSmart = false
-                if (rateObj) {
-                    const rateTime = new Date(rateObj.valid_from).getTime()
-                    isSmart = smartMap.get(rateTime) || false
-                }
+                // Determine if this slot is scheduled for heating
+                // Align to 30-min boundary to match schedule slots
+                const alignedTime = Math.floor(slotTime / (30 * 60 * 1000)) * (30 * 60 * 1000)
+                const isScheduled = scheduledMap.has(alignedTime)
 
                 const slotReadings = readingsBySlot.get(slotTime) || []
 
@@ -246,7 +255,7 @@ export function CombinedHistoryChart() {
                     timestamp,
                     raw_time: slotTime,
                     rate: rateObj ? rateObj.value_inc_vat : null,
-                    isSmart: isSmart,
+                    isScheduled: isScheduled,
                     power_0: avg0,
                     power_1: avg1
                 })
@@ -283,16 +292,16 @@ export function CombinedHistoryChart() {
         offPeriods.push({ start: offStart, end: data[data.length - 1].timestamp })
     }
 
-    // Custom Dot for Smart Slots (Only show every 30 mins to avoid clutter)
-    const SmartDot = (props: any) => {
+    // Custom Dot for Scheduled Heating Slots (Only show every 30 mins to avoid clutter)
+    const ScheduledDot = (props: any) => {
         const { cx, cy, payload } = props;
-        if (payload && payload.isSmart) {
+        if (payload && payload.isScheduled) {
             // Check if on 30-min boundary
             const date = new Date(payload.raw_time)
             const min = date.getMinutes()
             if (min % 30 === 0) {
                 return (
-                    <circle cx={cx} cy={cy} r={3} fill="#10b981" stroke="none" />
+                    <circle cx={cx} cy={cy} r={4} fill="#10b981" stroke="#fff" strokeWidth={1} />
                 );
             }
         }
@@ -484,11 +493,11 @@ export function CombinedHistoryChart() {
                                 contentStyle={{ backgroundColor: "#1f2937", border: "none", color: "#fff" }}
                                 formatter={(value: any, name: any, props: any) => {
                                     if (name === "Rate (p/kWh)") {
-                                        const isSmart = props.payload.isSmart
+                                        const isScheduled = props.payload.isScheduled
                                         return [
                                             <div key="rate">
                                                 <span>{Number(value).toFixed(2)}p</span>
-                                                {isSmart && <span className="ml-2 text-green-400 font-bold">●</span>}
+                                                {isScheduled && <span className="ml-2 text-green-400 font-bold">● Heating</span>}
                                             </div>,
                                             name
                                         ]
@@ -506,7 +515,7 @@ export function CombinedHistoryChart() {
                                 name="Rate (p/kWh)"
                                 stroke="#f050f8"
                                 strokeWidth={2}
-                                dot={<SmartDot />}
+                                dot={<ScheduledDot />}
                                 connectNulls
                             />
 

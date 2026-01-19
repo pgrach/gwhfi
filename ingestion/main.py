@@ -6,6 +6,7 @@ from config import Config
 from services.time_service import TimeService
 from services.shelly_manager import ShellyManager
 from services.smart_scheduler import SmartScheduler
+from services.schedule_storage import ScheduleStorage
 from tuya_manager import TuyaManager
 from octopus_client import OctopusClient
 
@@ -37,6 +38,7 @@ class SmartWaterController:
         
         self.octopus = OctopusClient(Config.OCTOPUS_PRODUCT_CODE, Config.OCTOPUS_REGION_CODE)
         self.scheduler = SmartScheduler(Config)
+        self.schedule_storage = ScheduleStorage()
 
         self.main_heater_slots = []
         self.second_heater_slots = []
@@ -128,6 +130,10 @@ class SmartWaterController:
         self.second_heater_slots = self.octopus.get_negative_rates(
             future_rates, Config.SECOND_HEATER_THRESHOLD
         )
+
+        # Save schedule to Supabase for frontend visualization
+        self.schedule_storage.save_schedule(self.main_heater_slots, heater_type="off_peak")
+        self.schedule_storage.save_schedule(self.second_heater_slots, heater_type="peak")
 
         # Update UI state
         self.system_state["rates"] = rates
