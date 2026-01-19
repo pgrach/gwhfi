@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from config import Config
 from services.time_service import TimeService
 from services.shelly_manager import ShellyManager
+from services.smart_scheduler import SmartScheduler
 from tuya_manager import TuyaManager
 from octopus_client import OctopusClient
 
@@ -35,12 +36,18 @@ class SmartWaterController:
             logger.warning("Shelly Manager disabled. Smart Cooldown will NOT function.")
         
         self.octopus = OctopusClient(Config.OCTOPUS_PRODUCT_CODE, Config.OCTOPUS_REGION_CODE)
-        
+        self.scheduler = SmartScheduler(Config)
+
         self.main_heater_slots = []
         self.second_heater_slots = []
         
         self.cooldown_until = None
-        
+
+        # Tank Full detection - require consecutive low readings to prevent false triggers
+        self.low_power_count = 0
+        self.LOW_POWER_THRESHOLD = 10  # Watts
+        self.LOW_POWER_READINGS_REQUIRED = 3  # Need 3 consecutive readings (~3 mins)
+
         # State storage for UI
         self.system_state = {
             "peak_heater": {"online": False, "state": "UNKNOWN"},
@@ -58,72 +65,83 @@ class SmartWaterController:
             logger.error("System clock is unreliable! Aborting startup.")
             raise SystemExit("Unreliable system clock")
 
-    def _get_window_slots(self, rates, start_hour, end_hour, hours_needed):
+    def should_update_schedule(self):
         """
-        Finds the cheapest slots within a specific daily window.
-        start_hour: int (0-23)
-        end_hour: int (0-23)
+        Determines if we should check for new rates based on time of day.
+        During rate publication window (15:00-19:00 UTC), check every 15 minutes.
+        Outside that window, check every 2 hours.
         """
-        # Filter rates for the target window
-        window_rates = []
-        for r in rates:
-            # We need to handle windows that cross midnight if needed (not needed for current spec)
-            # Current spec: 00-07, 12-16, 19-23
-            
-            # Check if rate falls within window
-            # We need to be careful with "valid_from" being today vs tomorrow
-            # Simplification: Just check the hour component of valid_from
-            h = r['valid_from'].hour
-            if start_hour <= h < end_hour:
-                window_rates.append(r)
-                
-        if not window_rates:
-            return []
-            
-        return self.octopus.find_cheapest_blocks(window_rates, hours_needed)
+        now = self.time_service.now()
+        should_check, reason = self.scheduler.should_check_for_new_rates(
+            now,
+            Config.RATE_PUBLISH_WINDOW_START,
+            Config.RATE_PUBLISH_WINDOW_END
+        )
+        if should_check:
+            logger.debug(f"Rate check triggered: {reason}")
+        return should_check
 
     def update_schedule(self):
-        """Fetches rates and calculates heating slots based on 3-Window Strategy."""
-        logger.info("Updating schedule from Octopus Energy...")
+        """
+        Fetches rates and calculates heating slots using Smart Scheduler.
+        Replaces the old fixed 3-Window Strategy with dynamic rate-based scheduling.
+        """
+        now = self.time_service.now()
+
+        # Reset daily flags at midnight
+        if now.hour == 0 and now.minute < 2:
+            self.scheduler.reset_daily_flags()
+
+        logger.info("Fetching rates from Octopus Energy...")
         rates = self.octopus.get_rates()
-        
+
         if not rates:
-            logger.error("Failed to fetch rates. Retaining old schedule if exists.")
+            logger.error("Failed to fetch rates. Retaining existing schedule.")
             return
 
-        # Filter out past rates
-        now = self.time_service.now()
+        self.scheduler.mark_rate_check(now)
+
+        # Filter to future rates only
         future_rates = [r for r in rates if r['valid_to'] > now]
 
         if not future_rates:
-            logger.warning("No future rates found! Waiting for next update.")
+            logger.warning("No future rates available. Waiting for next update.")
             return
-            
-        # --- 3-WINDOW STRATEGY ---
-        # 1. Night (00:00 - 07:00): 2 Hours
-        night_slots = self._get_window_slots(future_rates, 0, 7, 2.0)
-        
-        # 2. Afternoon (12:00 - 16:00): 1 Hour
-        afternoon_slots = self._get_window_slots(future_rates, 12, 16, 1.0)
-        
-        # 3. Evening (19:00 - 23:59): 1 Hour (Recovery)
-        evening_slots = self._get_window_slots(future_rates, 19, 24, 1.0)
-        
-        # Combine
-        self.main_heater_slots = night_slots + afternoon_slots + evening_slots
-        self.main_heater_slots.sort(key=lambda x: x['valid_from']) # Keep sorted
-        
-        # Peak Heater: Standard Negative Logic
-        negative = self.octopus.get_negative_rates(future_rates, Config.SECOND_HEATER_THRESHOLD)
-        self.second_heater_slots = negative
-        
+
+        # Check if we have tomorrow's rates
+        has_tomorrow = self.scheduler.has_tomorrow_rates(rates, now)
+
+        if has_tomorrow and not self.scheduler.tomorrow_scheduled:
+            logger.info("Tomorrow's rates are now available! Computing optimized schedule...")
+            self.scheduler.mark_tomorrow_scheduled()
+
+        # Compute optimal slots using Smart Scheduler
+        self.main_heater_slots = self.scheduler.compute_optimal_slots(
+            rates=future_rates,
+            budget_hours=Config.DAILY_HEATING_BUDGET_HOURS,
+            max_price=Config.ABSOLUTE_MAX_PRICE,
+            use_below_average=Config.USE_BELOW_AVERAGE,
+            blocked_hours=Config.BLOCKED_HOURS
+        )
+
+        # Peak Heater: Negative/free rate strategy (unchanged)
+        self.second_heater_slots = self.octopus.get_negative_rates(
+            future_rates, Config.SECOND_HEATER_THRESHOLD
+        )
+
         # Update UI state
         self.system_state["rates"] = rates
-        self.system_state["next_schedule_update"] = (datetime.now() + timedelta(hours=6)).strftime("%H:%M")
-        
-        logger.info(f"--- Updated Schedule ({len(self.main_heater_slots)} slots) ---")
-        for slot in self.main_heater_slots:
-            logger.info(f"  [Off-Peak] {slot['valid_from'].strftime('%H:%M')} - {slot['valid_to'].strftime('%H:%M')} ({slot['value_inc_vat']}p)")
+        self.system_state["schedule"] = self.scheduler.get_schedule_for_display()
+        self.system_state["next_schedule_update"] = self._get_next_schedule_check_time(now)
+
+    def _get_next_schedule_check_time(self, now):
+        """Calculate when the next schedule check will occur."""
+        hour = now.hour
+        if Config.RATE_PUBLISH_WINDOW_START <= hour < Config.RATE_PUBLISH_WINDOW_END:
+            next_check = now + timedelta(minutes=15)
+        else:
+            next_check = now + timedelta(hours=2)
+        return next_check.strftime("%H:%M")
 
     def is_in_slot(self, slots, current_time):
         """Checks if current_time is within any of the provided slots."""
@@ -166,19 +184,25 @@ class SmartWaterController:
              
         elif active_offpeak and not self.cooldown_until:
             # We are ON. Check Power Consumption.
-            # Using Channel 1 for Off-Peak Heater (implied from context)
-            power = self.shelly.get_power(channel=1) 
-            
+            # Using Channel 1 for Off-Peak Heater
+            power = self.shelly.get_power(channel=1)
+
             if power is not None:
-                # Threshold: 10W (to be safe even if standby is 1-2W)
-                if power < 10: 
-                    logger.info(f"📉 Tank Full Detected (Power: {power}W). Triggering Smart Cooldown.")
-                    # Set 90 minute cooldown
-                    self.cooldown_until = now_utc + timedelta(minutes=90)
-                    active_offpeak = False # Turn off immediately
+                if power < self.LOW_POWER_THRESHOLD:
+                    self.low_power_count += 1
+                    logger.debug(f"Low power reading {self.low_power_count}/{self.LOW_POWER_READINGS_REQUIRED} ({power}W)")
+
+                    if self.low_power_count >= self.LOW_POWER_READINGS_REQUIRED:
+                        # Confirmed tank is full after multiple consecutive low readings
+                        logger.info(f"📉 Tank Full Confirmed ({self.low_power_count} consecutive readings < {self.LOW_POWER_THRESHOLD}W). Triggering Smart Cooldown.")
+                        self.cooldown_until = now_utc + timedelta(minutes=90)
+                        active_offpeak = False
+                        self.low_power_count = 0  # Reset counter
                 else:
-                    # Log occasionally?
-                    pass
+                    # Power is normal (heater actively drawing), reset counter
+                    if self.low_power_count > 0:
+                        logger.debug(f"Power restored ({power}W). Resetting low power counter.")
+                    self.low_power_count = 0
             else:
                 logger.warning("Failed to read power. Cannot verify Tank Full status.")
 
@@ -201,8 +225,8 @@ class SmartWaterController:
             self.system_state[key]["state"] = "ON" if is_on else "OFF"
             
         if not is_online:
-            logger.warning(f"⚠️ {device_name} is OFFLINE. Cannot control it.")
-            return # Skip control if offline
+            logger.warning(f"⚠️ {device_name} reported OFFLINE. Attempting control anyway...")
+            # Do NOT return, try to send command
         
         if is_on != target_state:
             action = "Turning ON" if target_state else "Turning OFF"
@@ -269,21 +293,30 @@ class SmartWaterController:
         # 1. Verification on startup
         self.perform_health_check()
         self.update_schedule()
-        
-        schedule.every(6).hours.do(self.update_schedule)
+
+        # Health check every hour (keep this on fixed schedule)
         schedule.every(1).hours.do(self.perform_health_check)
-        
+
         logger.info("Starting Control Loop (Press Ctrl+C to stop)")
+        logger.info(f"Smart Scheduler Config: Budget={Config.DAILY_HEATING_BUDGET_HOURS}h, MaxPrice={Config.ABSOLUTE_MAX_PRICE}p, BelowAvg={Config.USE_BELOW_AVERAGE}")
+        if Config.BLOCKED_HOURS:
+            logger.info(f"Blocked hours: {Config.BLOCKED_HOURS}")
+
         try:
             while True:
                 try:
                     schedule.run_pending()
+
+                    # Smart schedule updates based on time of day
+                    if self.should_update_schedule():
+                        self.update_schedule()
+
                     self.control_loop()
                 except Exception as e:
                     logger.error(f"CRITICAL ERROR in control loop: {e}", exc_info=True)
                     time.sleep(5)
-                
-                time.sleep(60) # Check every minute
+
+                time.sleep(60)  # Check every minute
         except KeyboardInterrupt:
             logger.info("Stopping...")
 
