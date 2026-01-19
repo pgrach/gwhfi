@@ -194,7 +194,16 @@ class SmartWaterController:
             power = self.shelly.get_power(channel=1)
 
             if power is not None:
-                if power < self.LOW_POWER_THRESHOLD:
+                # Check for Mechanical Timer Grace Period
+                # If the previous hour was blocked, the mechanical timer might be slow to close.
+                # Allow a 30-minute buffer where we ignore 0W readings.
+                prev_hour = (now_utc.hour - 1) % 24
+                is_grace_period = (prev_hour in Config.BLOCKED_HOURS) and (now_utc.minute < 30)
+
+                if is_grace_period and power < self.LOW_POWER_THRESHOLD:
+                    logger.info(f"⏳ Grace Period (Mechanical Switch Lag): Ignoring low power ({power}W).")
+                    self.low_power_count = 0 
+                elif power < self.LOW_POWER_THRESHOLD:
                     self.low_power_count += 1
                     logger.debug(f"Low power reading {self.low_power_count}/{self.LOW_POWER_READINGS_REQUIRED} ({power}W)")
 
