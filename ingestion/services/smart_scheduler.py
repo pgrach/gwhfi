@@ -77,29 +77,52 @@ class SmartScheduler:
             eligible.append(slot)
 
         # Calculate how many slots we need
-        slots_needed = int(budget_hours * 2)  # 30-minute slots
+        total_slots_needed = int(budget_hours * 2)
+        afternoon_slots_needed = 2 # 1 Hour
 
-        if len(eligible) < slots_needed:
-            logger.warning(f"Only {len(eligible)} slots below threshold. Need {slots_needed}. Will use cheapest available.")
-            # Fall back to cheapest slots regardless of threshold
-            all_unblocked = [r for r in rates if r['valid_from'].hour not in blocked_hours]
-            all_unblocked.sort(key=lambda s: s['value_inc_vat'])
-            selected = all_unblocked[:slots_needed]
-        else:
-            # Sort by price and take cheapest
-            eligible.sort(key=lambda s: s['value_inc_vat'])
-            selected = eligible[:slots_needed]
+        # --- STEP 1: Secure Afternoon Boost (14:00 - 16:00) ---
+        # User wants 1 hour of heating in the afternoon if price < MAX
+        afternoon_candidates = []
+        for slot in eligible:
+            h = slot['valid_from'].hour
+            # Check 14:00 <= h < 16:00
+            if 14 <= h < 16:
+                afternoon_candidates.append(slot)
+        
+        # Sort by price and pick cheapest 2 slots (1 hour)
+        afternoon_candidates.sort(key=lambda s: s['value_inc_vat'])
+        selected_afternoon = afternoon_candidates[:afternoon_slots_needed]
+        
+        if len(selected_afternoon) < afternoon_slots_needed:
+             logger.warning(f"Could not find {afternoon_slots_needed} cheap slots in afternoon. Found {len(selected_afternoon)}.")
 
-        # Sort selected slots chronologically
-        selected.sort(key=lambda s: s['valid_from'])
-
+        # --- STEP 2: Fill Logic (Night/Rest of Day) ---
+        # Remaining slots needed
+        remaining_slots_count = total_slots_needed - len(selected_afternoon)
+        
+        # Filter out slots already selected
+        selected_ids = {f"{s['valid_from']}" for s in selected_afternoon}
+        remaining_candidates = [s for s in eligible if f"{s['valid_from']}" not in selected_ids]
+        
+        # Sort remaining by price
+        remaining_candidates.sort(key=lambda s: s['value_inc_vat'])
+        
+        # Pick the best of the rest
+        selected_rest = remaining_candidates[:remaining_slots_count]
+        
+        # Combine
+        final_selection = selected_afternoon + selected_rest
+        
+        # Sort chronologically
+        final_selection.sort(key=lambda s: s['valid_from'])
+        
         # Log the schedule
-        self._log_schedule_summary(selected, rejected_expensive, rejected_blocked, threshold, daily_avg)
-
-        self.current_schedule = selected
+        self._log_schedule_summary(final_selection, rejected_expensive, rejected_blocked, threshold, daily_avg)
+        
+        self.current_schedule = final_selection
         self.last_schedule_computation = datetime.utcnow()
-
-        return selected
+        
+        return final_selection
 
     def _log_schedule_summary(self, selected, rejected_expensive, rejected_blocked, threshold, daily_avg):
         """Logs a clear summary of the computed schedule."""
