@@ -39,28 +39,37 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
 
 This project consists of three main components:
 
-1.  **Frontend (Next.js)**: The modern web dashboard.
+1.  **Frontend (Next.js)**: The modern web dashboard for visualization.
 2.  **Controller (Python)**: Local service that controls the heaters based on Octopus Agile rates (via Tuya).
 3.  **Data Worker (Python)**: Background service that ingests real-time power data from Shelly Cloud to Supabase.
 
-### How to Run
+### ⚙️ System Logic (New Features)
 
-**1. Start the Frontend**
-```bash
-npm run dev
-# Open http://localhost:3000
-```
+*   **Smart Scheduling**: Daily heating slots are calculated based on the cheapest Octopus Agile rates.
+*   **Peak Heating**: The main heater runs only during negative pricing or extreme lows.
+*   **Smart Cooldown**: If the heater is ON but the Shelly sensor reports <10W (tank full), the system forces a 90-minute cooldown to save energy.
+*   **Grace Period**: The system ignores "0 Watt" readings for the first 30 minutes after a blocked period (16:00-19:00) to allow for mechanical timer drift.
 
-**2. Start the Controller**
-Controls the physical devices.
-```bash
-cd ingestion
-python main.py
-```
+### 🚀 How to Run (Production)
 
-**3. Start the Data Worker**
-Logs energy data to the database.
+**Environment Variables**:
+Ensure your `.env` (or Railway variables) includes:
+*   `BLOCKED_HOURS=[7, 8, 16, 17, 18]`
+*   Tuya Credentials (`TUYA_ACCESS_ID`, `TUYA_ACCESS_KEY`, etc.)
+*   **Important**: If Tuya control stops working, verify your **IoT Core Trial** hasn't expired. You can extend it for free in the Tuya Console.
+
+**Start Script**:
+Use the helper script to run both services:
 ```bash
-cd ingestion
-python cloud_worker.py
+./start.sh
 ```
+*(On Windows, use `run.bat`)*
+
+### 🛠 Diagnostics
+If you suspect connectivity issues, run the included diagnostic tool:
+```bash
+python diagnose.py
+```
+This will check the status of:
+1.  Tuya API Connection (Main + Second Heater)
+2.  Shelly API Connection (Power Readings)
