@@ -46,6 +46,7 @@ This project consists of three main components:
 ### ⚙️ System Logic (New Features)
 
 *   **Smart Scheduling**: Daily heating slots are calculated based on the cheapest Octopus Agile rates.
+*   **Afternoon Boost**: Ensures at least 1 hour of heating between 14:00-16:00 (lowest price in window) to provide hot water for the evening.
 *   **Peak Heating**: The main heater runs only during negative pricing or extreme lows.
 *   **Smart Cooldown**: If the heater is ON but the Shelly sensor reports <10W (tank full), the system forces a 90-minute cooldown to save energy.
 *   **Grace Period**: The system ignores "0 Watt" readings for the first 30 minutes after a blocked period (16:00-19:00) to allow for mechanical timer drift.
