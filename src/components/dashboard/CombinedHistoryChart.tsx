@@ -131,7 +131,6 @@ export function CombinedHistoryChart() {
 
                 if (schedData.data) {
                     scheduleSlots = schedData.data
-                    console.log("Scheduled heating slots:", scheduleSlots.length)
                 } else if (schedData.error) {
                     console.error("Schedule fetch error:", schedData.error)
                 }
@@ -187,8 +186,6 @@ export function CombinedHistoryChart() {
                     t += 30 * 60 * 1000 // 30 minutes in ms
                 }
             })
-
-            console.log("Scheduled time slots marked:", scheduledMap.size)
             // -------------------------------------------------
 
 

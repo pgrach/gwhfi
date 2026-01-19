@@ -153,11 +153,6 @@ export function LiveStatus() {
             ...(channel1Response.data || [])
         ]
 
-        // Debug logging
-        console.log("Channel 0 data:", channel0Response.data)
-        console.log("Channel 1 data:", channel1Response.data)
-        console.log("Combined data:", combinedData)
-
         if (combinedData.length > 0) {
             setReadings(combinedData)
             // Use the most recent timestamp from either channel
@@ -178,12 +173,6 @@ export function LiveStatus() {
     const main = readings.find(r => r.channel === 0)
     const second = readings.find(r => r.channel === 1)
 
-    // Debug logging
-    console.log("Main (channel 0):", main)
-    console.log("Second (channel 1):", second)
-    console.log("Main power_w:", main?.power_w)
-    console.log("Second power_w:", second?.power_w)
-
     // Data ingestion runs every 10 minutes via GitHub Actions
     // Show offline if no data for 15 minutes (10 min schedule + 5 min buffer)
     const isOnline = lastUpdated && (new Date().getTime() - lastUpdated.getTime()) < 15 * 60 * 1000
@@ -196,8 +185,6 @@ export function LiveStatus() {
     // Determine if heaters are ON (power > 100W threshold)
     const isPeakOn = (main?.power_w ?? 0) > 100
     const isOffPeakOn = (second?.power_w ?? 0) > 100
-
-    console.log("isPeakOn:", isPeakOn, "isOffPeakOn:", isOffPeakOn)
 
     // Max power for progress bar (3kW heaters)
     const MAX_POWER = 3200

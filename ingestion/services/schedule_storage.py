@@ -68,7 +68,8 @@ class ScheduleStorage:
 
         try:
             # First, delete existing future schedule for this heater type
-            now = datetime.now(timezone.utc).isoformat()
+            # Use strftime to ensure proper ISO format with 'T' separator
+            now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
             delete_url = f"{self.supabase_url}/rest/v1/heating_schedule"
             delete_params = f"heater_type=eq.{heater_type}&slot_start=gte.{now}"
 
