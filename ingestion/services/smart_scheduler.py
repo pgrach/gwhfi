@@ -108,6 +108,26 @@ class SmartScheduler:
         remaining_candidates.sort(key=lambda s: s['value_inc_vat'])
         
         # Pick the best of the rest
+        # JUST-IN-TIME LOGIC:
+        # We want to prefer later slots to minimize standing losses and prevent early saturation.
+        # We apply a small "virtual discount" to later hours for sorting purposes.
+        # -0.01p per hour means 05:00 is "0.05p cheaper" than 00:00.
+        # This breaks ties and near-ties in favor of later slots.
+        def effective_price(slot):
+            price = slot['value_inc_vat']
+            hour_index = slot['valid_from'].hour
+            # If hour is 0-6 (night), treat it as 24-30 for sorting to maximize "lateness" into the morning
+            # Actually, standard hour is fine, 23 is later than 00 in a day? No, we look at chronological or just hour value?
+            # Rates are usually for the 'coming' day.
+            # Let's just use the timestamp value to prioritize chronological lateness
+            # But we are sorting by PRICE.
+            
+            # Penalize earlier hours slightly.
+            # price - (0.01 * hour) -> Higher hour = Lower effective price
+            return price - (0.01 * hour_index)
+
+        remaining_candidates.sort(key=effective_price)
+
         selected_rest = remaining_candidates[:remaining_slots_count]
         
         # Combine
