@@ -32,7 +32,7 @@ function PeakHeaterCard({ power, voltage, energy, isOn, maxPower }: {
 
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 relative">
                 <div className="flex items-center gap-2">
-                    <CardTitle className="text-sm font-medium">Peak Heater</CardTitle>
+                    <CardTitle className="text-sm font-medium">Heater 1 (Boost)</CardTitle>
                     {isOn ? (
                         <Badge className="bg-blue-500 hover:bg-blue-600 animate-pulse text-xs">
                             <Flame className="w-3 h-3 mr-1" />
@@ -87,7 +87,7 @@ function OffPeakHeaterCard({ power, voltage, energy, isOn, maxPower }: {
 
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 relative">
                 <div className="flex items-center gap-2">
-                    <CardTitle className="text-sm font-medium">Off-Peak Heater</CardTitle>
+                    <CardTitle className="text-sm font-medium">Heater 2 (Storage)</CardTitle>
                     {isOn ? (
                         <Badge className="bg-green-500 hover:bg-green-600 animate-pulse text-xs">
                             <Flame className="w-3 h-3 mr-1" />

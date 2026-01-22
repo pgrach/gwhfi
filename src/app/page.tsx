@@ -25,8 +25,8 @@ export default function DashboardPage() {
                 <ThemeToggle />
             </div>
             <div className="space-y-4">
-                <CurrentRate />
                 <LiveStatus />
+                <CurrentRate />
                 <CombinedHistoryChart />
             </div>
         </div>
