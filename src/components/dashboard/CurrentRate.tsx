@@ -97,25 +97,25 @@ export function CurrentRate() {
         )
     }
 
-    const isSmart = currentRate && currentRate.value_inc_vat <= avgRate
+    const isSmart = true // currentRate && currentRate.value_inc_vat <= avgRate
     const isNegative = currentRate && currentRate.value_inc_vat <= 0
 
     return (
         <Card className={`transition-all duration-300 ${isNegative
-                ? "bg-gradient-to-br from-green-500/20 to-emerald-500/20 border-green-500/40 shadow-lg shadow-green-500/10"
-                : isSmart
-                    ? "bg-gradient-to-br from-emerald-500/10 to-teal-500/10 border-emerald-500/20"
-                    : "bg-gradient-to-br from-purple-500/10 to-pink-500/10 border-purple-500/20"
+            ? "bg-gradient-to-br from-green-500/20 to-emerald-500/20 border-green-500/40 shadow-lg shadow-green-500/10"
+            : isSmart
+                ? "bg-gradient-to-br from-emerald-500/10 to-teal-500/10 border-emerald-500/20"
+                : "bg-gradient-to-br from-purple-500/10 to-pink-500/10 border-purple-500/20"
             }`}>
             <CardContent className="p-4">
                 <div className="flex flex-col sm:flex-row sm:items-center gap-4">
                     {/* Current Rate */}
                     <div className="flex items-center gap-4 flex-1">
                         <div className={`flex items-center justify-center w-12 h-12 rounded-xl ${isNegative
-                                ? "bg-green-500 shadow-lg shadow-green-500/30"
-                                : isSmart
-                                    ? "bg-emerald-500"
-                                    : "bg-purple-500"
+                            ? "bg-green-500 shadow-lg shadow-green-500/30"
+                            : isSmart
+                                ? "bg-emerald-500"
+                                : "bg-purple-500"
                             }`}>
                             {isNegative ? (
                                 <TrendingDown className="w-6 h-6 text-white" />
@@ -137,7 +137,7 @@ export function CurrentRate() {
                                 )}
                                 {isSmart && !isNegative && (
                                     <Badge className="bg-emerald-500 hover:bg-emerald-600">
-                                        ✓ SMART
+                                        ✓ Below Avg
                                     </Badge>
                                 )}
                             </div>
