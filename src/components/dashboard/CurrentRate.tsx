@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Zap, TrendingDown, Clock } from "lucide-react"
+import { supabase } from "@/lib/supabase"
 
 interface Rate {
     value_inc_vat: number
@@ -30,11 +31,20 @@ export function CurrentRate() {
                 const endOfDay = new Date(now)
                 endOfDay.setHours(23, 59, 59, 999)
 
+                // Fetch Rates
                 const response = await fetch(
                     `https://api.octopus.energy/v1/products/${PRODUCT}/electricity-tariffs/${TARIFF}/standard-unit-rates/?period_from=${startOfDay.toISOString()}&period_to=${endOfDay.toISOString()}`
                 )
                 const data = await response.json()
                 const rates: Rate[] = data.results || []
+
+                // Fetch Schedule
+                const { data: scheduleData, error: scheduleError } = await supabase
+                    .from('heating_schedule')
+                    .select('*')
+                    .gt('slot_start', now.toISOString())
+                    .order('slot_start', { ascending: true })
+                    .limit(1)
 
                 if (rates.length === 0) {
                     setLoading(false)
@@ -55,17 +65,21 @@ export function CurrentRate() {
                 })
                 setCurrentRate(current || null)
 
-                // Find next smart slot (below average, in the future)
-                const futureSmartSlots = rates
-                    .filter(r => {
-                        const from = new Date(r.valid_from).getTime()
-                        return from > nowTime && r.value_inc_vat <= avg
-                    })
-                    .sort((a, b) => new Date(a.valid_from).getTime() - new Date(b.valid_from).getTime())
+                // Find next smart slot (from schedule)
+                if (scheduleData && scheduleData.length > 0) {
+                    const nextSlot = scheduleData[0]
+                    const nextTime = new Date(nextSlot.slot_start)
+                    const diffMs = nextTime.getTime() - nowTime
 
-                if (futureSmartSlots.length > 0) {
-                    const next = new Date(futureSmartSlots[0].valid_from)
-                    setNextSmartSlot(next.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
+                    const hours = Math.floor(diffMs / (1000 * 60 * 60))
+                    const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60))
+
+                    const timeStr = nextTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                    const durationStr = `in ${hours}h ${minutes}m`
+
+                    setNextSmartSlot(`${timeStr} (${durationStr})`)
+                } else {
+                    setNextSmartSlot("None scheduled")
                 }
 
                 setLoading(false)
@@ -97,7 +111,7 @@ export function CurrentRate() {
         )
     }
 
-    const isSmart = true // currentRate && currentRate.value_inc_vat <= avgRate
+    const isSmart = currentRate && currentRate.value_inc_vat <= avgRate
     const isNegative = currentRate && currentRate.value_inc_vat <= 0
 
     return (
@@ -163,7 +177,7 @@ export function CurrentRate() {
                         <Clock className="w-5 h-5 text-muted-foreground" />
                         <div>
                             <p className="text-sm text-muted-foreground font-medium">Next Smart Slot</p>
-                            <span className="text-lg font-semibold">
+                            <span className="text-lg font-semibold whitespace-nowrap">
                                 {nextSmartSlot || "—"}
                             </span>
                         </div>
