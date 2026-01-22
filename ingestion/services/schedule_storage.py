@@ -110,9 +110,11 @@ class ScheduleStorage:
 
             if response.status_code in [200, 201]:
                 logger.info(f"Saved {len(rows)} schedule slots for {heater_type} to Supabase")
+                print("SAVE SUCCESS", flush=True)
                 return True
             else:
                 logger.error(f"Failed to save schedule: {response.status_code} - {response.text}")
+                print(f"SAVE ERROR: {response.status_code} - {response.text}", flush=True)
                 return False
 
         except Exception as e:

@@ -2,7 +2,7 @@
 Smart Scheduler for Water Heater Control
 
 Computes optimal heating slots based on Octopus Agile rates rather than
-fixed time windows. The algorithm:
+time windows. The algorithm:
 1. Fetches rates for the next 24-48 hours
 2. Applies price threshold (below average AND/OR absolute cap)
 3. Excludes blocked hours (e.g., morning peak)
@@ -48,15 +48,15 @@ class SmartScheduler:
         # Calculate daily average
         daily_avg = sum(r['value_inc_vat'] for r in rates) / len(rates)
 
-        # Determine price threshold
-        if use_below_average:
-            threshold = min(daily_avg, max_price)
-        else:
-            threshold = max_price
+        # Determine price thresholds
+        # strict_threshold: used for "fill" logic to pick only truly cheap slots
+        # hard_limit: absolute max price we are willing to pay for "boosts"
+        strict_threshold = min(daily_avg, max_price) if use_below_average else max_price
+        hard_limit = max_price
 
-        logger.info(f"Smart Scheduler: Daily avg={daily_avg:.2f}p, Threshold={threshold:.2f}p (below_avg={use_below_average})")
+        logger.info(f"Smart Scheduler: Daily avg={daily_avg:.2f}p, Strict Threshold={strict_threshold:.2f}p, Hard Limit={hard_limit:.2f}p")
 
-        # Filter eligible slots
+        # Filter eligible slots (HARD LIMIT ONLY)
         eligible = []
         rejected_expensive = []
         rejected_blocked = []
@@ -69,8 +69,8 @@ class SmartScheduler:
                 rejected_blocked.append(slot)
                 continue
 
-            # Check price threshold
-            if slot['value_inc_vat'] > threshold:
+            # Check price threshold (Hard Limit)
+            if slot['value_inc_vat'] > hard_limit:
                 rejected_expensive.append(slot)
                 continue
 
@@ -79,6 +79,7 @@ class SmartScheduler:
         # Calculate how many slots we need
         total_slots_needed = int(budget_hours * 2)
         afternoon_slots_needed = 2 # 1 Hour
+        evening_slots_needed = 2 # 1 Hour for Evening Boost
 
         # --- STEP 1: Secure Afternoon Boost (14:00 - 16:00) ---
         # User wants 1 hour of heating in the afternoon if price < MAX
@@ -96,16 +97,42 @@ class SmartScheduler:
         if len(selected_afternoon) < afternoon_slots_needed:
              logger.warning(f"Could not find {afternoon_slots_needed} cheap slots in afternoon. Found {len(selected_afternoon)}.")
 
-        # --- STEP 2: Fill Logic (Night/Rest of Day) ---
+        # --- STEP 2: Secure Evening Boost (19:00 - 23:30) ---
+        # User wants maintain heat after dinner.
+        evening_candidates = []
+        for slot in eligible:
+            h = slot['valid_from'].hour
+            m = slot['valid_from'].minute
+            # Check 19:00 <= t < 23:30
+            if 19 <= h < 23 or (h == 23 and m < 30):
+                # Ensure we don't pick slots already picked in afternoon (unlikely given time windows, but good practice)
+                if slot not in selected_afternoon:
+                    evening_candidates.append(slot)
+        
+        # Sort by price and pick cheapest slots
+        evening_candidates.sort(key=lambda s: s['value_inc_vat'])
+        selected_evening = evening_candidates[:evening_slots_needed]
+
+        if len(selected_evening) < evening_slots_needed:
+             logger.warning(f"Could not find {evening_slots_needed} cheap slots in evening. Found {len(selected_evening)}.")
+
+        # --- STEP 3: Fill Logic (Night/Rest of Day) ---
         # Remaining slots needed
-        remaining_slots_count = total_slots_needed - len(selected_afternoon)
+        remaining_slots_count = total_slots_needed - len(selected_afternoon) - len(selected_evening)
+        if remaining_slots_count < 0:
+            remaining_slots_count = 0
         
         # Filter out slots already selected
-        selected_ids = {f"{s['valid_from']}" for s in selected_afternoon}
-        remaining_candidates = [s for s in eligible if f"{s['valid_from']}" not in selected_ids]
+        selected_ids = {f"{s['valid_from']}" for s in selected_afternoon + selected_evening}
+        
+        # Apply STRICT threshold for the fill logic
+        remaining_candidates = [
+            s for s in eligible 
+            if f"{s['valid_from']}" not in selected_ids 
+            and s['value_inc_vat'] <= strict_threshold
+        ]
         
         # Sort remaining by price
-        remaining_candidates.sort(key=lambda s: s['value_inc_vat'])
         
         # Pick the best of the rest
         # JUST-IN-TIME LOGIC:
@@ -116,12 +143,6 @@ class SmartScheduler:
         def effective_price(slot):
             price = slot['value_inc_vat']
             hour_index = slot['valid_from'].hour
-            # If hour is 0-6 (night), treat it as 24-30 for sorting to maximize "lateness" into the morning
-            # Actually, standard hour is fine, 23 is later than 00 in a day? No, we look at chronological or just hour value?
-            # Rates are usually for the 'coming' day.
-            # Let's just use the timestamp value to prioritize chronological lateness
-            # But we are sorting by PRICE.
-            
             # Penalize earlier hours slightly.
             # price - (0.01 * hour) -> Higher hour = Lower effective price
             return price - (0.01 * hour_index)
@@ -131,13 +152,13 @@ class SmartScheduler:
         selected_rest = remaining_candidates[:remaining_slots_count]
         
         # Combine
-        final_selection = selected_afternoon + selected_rest
+        final_selection = selected_afternoon + selected_evening + selected_rest
         
         # Sort chronologically
         final_selection.sort(key=lambda s: s['valid_from'])
         
         # Log the schedule
-        self._log_schedule_summary(final_selection, rejected_expensive, rejected_blocked, threshold, daily_avg)
+        self._log_schedule_summary(final_selection, rejected_expensive, rejected_blocked, strict_threshold, daily_avg)
         
         self.current_schedule = final_selection
         self.last_schedule_computation = datetime.utcnow()
