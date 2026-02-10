@@ -12,13 +12,37 @@ interface Rate {
     valid_to: string
 }
 
+// Helper: Get UK (Europe/London) date boundaries in UTC
+function getUKDateBoundaries(dayOffset: number = 0): { start: Date; end: Date } {
+    const now = new Date()
+    const ukFormatter = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Europe/London',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+    })
+    const parts = ukFormatter.formatToParts(now)
+    const year = parseInt(parts.find(p => p.type === 'year')!.value)
+    const month = parseInt(parts.find(p => p.type === 'month')!.value)
+    const day = parseInt(parts.find(p => p.type === 'day')!.value)
+
+    const tempDate = new Date(Date.UTC(year, month - 1, day + dayOffset, 0, 0, 0))
+    const ukTimeStr = tempDate.toLocaleString('en-US', { timeZone: 'Europe/London' })
+    const ukTime = new Date(ukTimeStr)
+    const offsetMs = ukTime.getTime() - tempDate.getTime()
+    const startUtc = new Date(tempDate.getTime() - offsetMs)
+    const endUtc = new Date(startUtc.getTime() + 24 * 60 * 60 * 1000 - 1)
+
+    return { start: startUtc, end: endUtc }
+}
+
 export function CurrentRate() {
     const [currentRate, setCurrentRate] = useState<Rate | null>(null)
     const [avgRate, setAvgRate] = useState<number>(0)
     const [nextSmartSlot, setNextSmartSlot] = useState<string | null>(null)
     const [loading, setLoading] = useState(true)
 
-    const PRODUCT = "AGILE-18-02-21"
+    const PRODUCT = "AGILE-24-10-01"
     const REGION = "C"
     const TARIFF = `E-1R-${PRODUCT}-${REGION}`
 
@@ -26,10 +50,7 @@ export function CurrentRate() {
         const fetchRates = async () => {
             try {
                 const now = new Date()
-                const startOfDay = new Date(now)
-                startOfDay.setHours(0, 0, 0, 0)
-                const endOfDay = new Date(now)
-                endOfDay.setHours(23, 59, 59, 999)
+                const { start: startOfDay, end: endOfDay } = getUKDateBoundaries(0)
 
                 // Fetch Rates
                 const response = await fetch(

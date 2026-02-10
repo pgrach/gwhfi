@@ -13,7 +13,8 @@ import {
     Tooltip,
     Legend,
     ResponsiveContainer,
-    ReferenceArea
+    ReferenceArea,
+    ReferenceLine
 } from "recharts"
 
 interface Rate {
@@ -29,12 +30,43 @@ interface ScheduleSlot {
     heater_type: string
 }
 
+// Helper: Get UK (Europe/London) date boundaries in UTC
+// This ensures "today" always means UK midnight-to-midnight regardless of viewer's timezone
+function getUKDateBoundaries(dayOffset: number = 0): { start: Date; end: Date } {
+    const now = new Date()
+    // Get the current date parts in UK timezone
+    const ukFormatter = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Europe/London',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+    })
+    const parts = ukFormatter.formatToParts(now)
+    const year = parseInt(parts.find(p => p.type === 'year')!.value)
+    const month = parseInt(parts.find(p => p.type === 'month')!.value)
+    const day = parseInt(parts.find(p => p.type === 'day')!.value)
+
+    // Build a date string in UK timezone and let the browser resolve the UTC offset
+    // Using Intl to reconstruct: "YYYY-MM-DDT00:00:00" in Europe/London
+    const ukMidnight = new Date(
+        new Date(`${year}-${String(month).padStart(2, '0')}-${String(day + dayOffset).padStart(2, '0')}T00:00:00`)
+            .toLocaleString('en-US', { timeZone: 'Europe/London' })
+    )
+    // More robust: compute the UTC epoch for UK midnight by finding the offset
+    const tempDate = new Date(Date.UTC(year, month - 1, day + dayOffset, 0, 0, 0))
+    // Find the UK offset at this date (handles BST/GMT automatically)
+    const ukTimeStr = tempDate.toLocaleString('en-US', { timeZone: 'Europe/London' })
+    const ukTime = new Date(ukTimeStr)
+    const offsetMs = ukTime.getTime() - tempDate.getTime()
+    // UK midnight in UTC = midnight minus the offset
+    const startUtc = new Date(tempDate.getTime() - offsetMs)
+    const endUtc = new Date(startUtc.getTime() + 24 * 60 * 60 * 1000 - 1) // 23:59:59.999
+
+    return { start: startUtc, end: endUtc }
+}
+
 export function CombinedHistoryChart() {
     const [data, setData] = useState<any[]>([])
-    // 0 = Today (Midnight to Midnight)
-    // 1 = Last 24h? No, let's stick to "Days History".
-    // Let's redefine: 1 = Today+Yesterday?
-    // User wants "24h". Let's assume "Today" view (00:00 - 23:59).
     const [viewMode, setViewMode] = useState<"today" | "tomorrow" | "7d" | "30d">("today")
     const [hasRates, setHasRates] = useState(true)
     const [totals, setTotals] = useState({ peak: 0, offPeak: 0 })
@@ -48,33 +80,29 @@ export function CombinedHistoryChart() {
     useEffect(() => {
         const fetchData = async () => {
 
-            // 1. Define Timeline Boundaries
-            let startDate = new Date()
-            let endDate = new Date()
+            // 1. Define Timeline Boundaries (always in UK time)
+            let startDate: Date
+            let endDate: Date
 
             if (viewMode === "today") {
-                // Today 00:00 to Today 23:59
-                startDate.setHours(0, 0, 0, 0)
-                endDate.setHours(23, 59, 59, 999)
+                const { start, end } = getUKDateBoundaries(0)
+                startDate = start
+                endDate = end
             } else if (viewMode === "tomorrow") {
-                // Today 00:00 to Tomorrow 23:59
-                // Or just Tomorrow? User usually wants to see the future plan.
-                // Let's show Tomorrow 00:00 to 23:59
-                startDate.setDate(startDate.getDate() + 1)
-                startDate.setHours(0, 0, 0, 0)
-
-                endDate.setDate(endDate.getDate() + 1)
-                endDate.setHours(23, 59, 59, 999)
+                const { start, end } = getUKDateBoundaries(1)
+                startDate = start
+                endDate = end
             } else if (viewMode === "7d") {
-                // Last 7 days to Today 23:59
-                startDate.setDate(startDate.getDate() - 7)
-                startDate.setHours(0, 0, 0, 0)
-                endDate.setHours(23, 59, 59, 999)
-            } else if (viewMode === "30d") {
-                // Last 30 days
-                startDate.setDate(startDate.getDate() - 30)
-                startDate.setHours(0, 0, 0, 0)
-                endDate.setHours(23, 59, 59, 999)
+                const { start } = getUKDateBoundaries(-7)
+                const { end } = getUKDateBoundaries(0)
+                startDate = start
+                endDate = end
+            } else {
+                // 30d
+                const { start } = getUKDateBoundaries(-30)
+                const { end } = getUKDateBoundaries(0)
+                startDate = start
+                endDate = end
             }
 
             const startIso = startDate.toISOString()
@@ -200,9 +228,9 @@ export function CombinedHistoryChart() {
                 // Always using RPC now, so always use bucket_time
                 const t = new Date(r.bucket_time)
 
-                // Align to bucket
-                const remainder = t.getMinutes() % bucketMinutes
-                t.setMinutes(t.getMinutes() - remainder, 0, 0)
+                // Align to bucket using UTC methods to avoid local timezone offset
+                const remainder = t.getUTCMinutes() % bucketMinutes
+                t.setUTCMinutes(t.getUTCMinutes() - remainder, 0, 0)
 
                 const key = t.getTime()
                 if (!readingsBySlot.has(key)) readingsBySlot.set(key, [])
@@ -213,6 +241,7 @@ export function CombinedHistoryChart() {
 
             while (currentCursor <= endDate) {
                 const timestamp = currentCursor.toLocaleString([], {
+                    timeZone: 'Europe/London',
                     month: (viewMode === "today" || viewMode === "tomorrow") ? undefined : 'numeric',
                     day: (viewMode === "today" || viewMode === "tomorrow") ? undefined : 'numeric',
                     hour: '2-digit',
@@ -235,18 +264,17 @@ export function CombinedHistoryChart() {
                 const slotReadings = readingsBySlot.get(slotTime) || []
 
                 // Extract power values based on mode
-                // RPC: avg_power
-                // Raw: power_w
-                // NOTE: With sparse data (0W readings skipped), we use null for missing data
-                // The chart's connectNulls will handle visualization
-                let avg0 = null
-                let avg1 = null
+                // For 7d/30d views: missing data = heater off (0W)
+                // For today/tomorrow: keep null to avoid filling future with zeros
+                const defaultPower = (viewMode === "7d" || viewMode === "30d") ? 0 : null
+                let avg0 = defaultPower
+                let avg1 = defaultPower
 
                 // Always using RPC now, so always use avg_power
                 const r0 = slotReadings.find(r => r.channel === 0)
                 const r1 = slotReadings.find(r => r.channel === 1)
-                avg0 = r0 ? r0.avg_power : null
-                avg1 = r1 ? r1.avg_power : null
+                avg0 = r0 ? r0.avg_power : defaultPower
+                avg1 = r1 ? r1.avg_power : defaultPower
 
                 buckets.push({
                     timestamp,
@@ -257,7 +285,7 @@ export function CombinedHistoryChart() {
                     power_1: avg1
                 })
 
-                currentCursor.setMinutes(currentCursor.getMinutes() + bucketMinutes)
+                currentCursor.setUTCMinutes(currentCursor.getUTCMinutes() + bucketMinutes)
             }
 
             setData(buckets)
@@ -272,7 +300,7 @@ export function CombinedHistoryChart() {
 
     data.forEach((point, idx) => {
         const isBothOff = (point.power_0 === null || point.power_0 === 0) &&
-                          (point.power_1 === null || point.power_1 === 0)
+            (point.power_1 === null || point.power_1 === 0)
 
         if (isBothOff && offStart === null) {
             // Start of off period
@@ -293,9 +321,9 @@ export function CombinedHistoryChart() {
     const ScheduledDot = (props: any) => {
         const { cx, cy, payload } = props;
         if (payload && payload.isScheduled) {
-            // Check if on 30-min boundary
+            // Check if on 30-min boundary (use UTC to avoid timezone issues)
             const date = new Date(payload.raw_time)
-            const min = date.getMinutes()
+            const min = date.getUTCMinutes()
             if (min % 30 === 0) {
                 return (
                     <circle cx={cx} cy={cy} r={4} fill="#10b981" stroke="#fff" strokeWidth={1} />
@@ -377,14 +405,12 @@ export function CombinedHistoryChart() {
                     <div className="flex items-center gap-3">
                         <CardTitle className="text-xl sm:text-2xl">Combined History</CardTitle>
                         {lastUpdate && (
-                            <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
-                                systemStatus === "active"
-                                    ? "bg-green-500/10 text-green-600 border border-green-500/20"
-                                    : "bg-orange-500/10 text-orange-600 border border-orange-500/20"
-                            }`}>
-                                <div className={`w-1.5 h-1.5 rounded-full ${
-                                    systemStatus === "active" ? "bg-green-500" : "bg-orange-500"
-                                } animate-pulse`} />
+                            <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${systemStatus === "active"
+                                ? "bg-green-500/10 text-green-600 border border-green-500/20"
+                                : "bg-orange-500/10 text-orange-600 border border-orange-500/20"
+                                }`}>
+                                <div className={`w-1.5 h-1.5 rounded-full ${systemStatus === "active" ? "bg-green-500" : "bg-orange-500"
+                                    } animate-pulse`} />
                                 <span>Updated {formatTimeAgo(lastUpdate)}</span>
                             </div>
                         )}
@@ -426,34 +452,22 @@ export function CombinedHistoryChart() {
                             ))}
 
                             {/* Current time indicator - only show for today and 7d/30d views */}
-                            {currentTimestamp && (viewMode === "today" || viewMode === "7d" || viewMode === "30d") && (() => {
-                                // Find the index of the current timestamp in data array
-                                const currentIndex = data.findIndex(d => d.timestamp === currentTimestamp.timestamp)
-
-                                // Create a narrow band around the current time (use adjacent points for x1 and x2)
-                                const x1 = currentIndex > 0 ? data[currentIndex - 1].timestamp : currentTimestamp.timestamp
-                                const x2 = currentIndex < data.length - 1 ? data[currentIndex + 1].timestamp : currentTimestamp.timestamp
-
-                                return (
-                                    <ReferenceArea
-                                        x1={x1}
-                                        x2={x2}
-                                        yAxisId="left"
-                                        fill="#3b82f6"
-                                        fillOpacity={0.15}
-                                        stroke="#3b82f6"
-                                        strokeWidth={2}
-                                        strokeOpacity={0.5}
-                                        label={{
-                                            value: "NOW",
-                                            position: "top",
-                                            fill: "#3b82f6",
-                                            fontSize: 11,
-                                            fontWeight: 700
-                                        }}
-                                    />
-                                )
-                            })()}
+                            {currentTimestamp && (viewMode === "today" || viewMode === "7d" || viewMode === "30d") && (
+                                <ReferenceLine
+                                    x={currentTimestamp.timestamp}
+                                    yAxisId="left"
+                                    stroke="#3b82f6"
+                                    strokeWidth={2}
+                                    strokeDasharray="4 2"
+                                    label={{
+                                        value: "NOW",
+                                        position: "top",
+                                        fill: "#3b82f6",
+                                        fontSize: 11,
+                                        fontWeight: 700
+                                    }}
+                                />
+                            )}
 
                             <XAxis
                                 dataKey="timestamp"
@@ -523,7 +537,6 @@ export function CombinedHistoryChart() {
                                 dataKey="power_0"
                                 name="Peak Heater (W)"
                                 stroke="#2563eb"
-                                connectNulls
                                 strokeWidth={2}
                                 dot={false}
                             />
@@ -533,7 +546,6 @@ export function CombinedHistoryChart() {
                                 dataKey="power_1"
                                 name="Off-Peak Heater (W)"
                                 stroke="#16a34a"
-                                connectNulls
                                 strokeWidth={2}
                                 dot={false}
                             />
