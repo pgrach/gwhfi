@@ -5,35 +5,12 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Zap, TrendingDown, Clock } from "lucide-react"
 import { supabase } from "@/lib/supabase"
+import { getUKDateBoundaries } from "@/lib/date-utils"
 
 interface Rate {
     value_inc_vat: number
     valid_from: string
     valid_to: string
-}
-
-// Helper: Get UK (Europe/London) date boundaries in UTC
-function getUKDateBoundaries(dayOffset: number = 0): { start: Date; end: Date } {
-    const now = new Date()
-    const ukFormatter = new Intl.DateTimeFormat('en-GB', {
-        timeZone: 'Europe/London',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-    })
-    const parts = ukFormatter.formatToParts(now)
-    const year = parseInt(parts.find(p => p.type === 'year')!.value)
-    const month = parseInt(parts.find(p => p.type === 'month')!.value)
-    const day = parseInt(parts.find(p => p.type === 'day')!.value)
-
-    const tempDate = new Date(Date.UTC(year, month - 1, day + dayOffset, 0, 0, 0))
-    const ukTimeStr = tempDate.toLocaleString('en-US', { timeZone: 'Europe/London' })
-    const ukTime = new Date(ukTimeStr)
-    const offsetMs = ukTime.getTime() - tempDate.getTime()
-    const startUtc = new Date(tempDate.getTime() - offsetMs)
-    const endUtc = new Date(startUtc.getTime() + 24 * 60 * 60 * 1000 - 1)
-
-    return { start: startUtc, end: endUtc }
 }
 
 export function CurrentRate() {

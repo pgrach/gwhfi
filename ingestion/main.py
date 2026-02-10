@@ -229,13 +229,13 @@ class SmartWaterController:
         
         is_on = False
         is_online = False
+        key = "peak_heater" if device_id == Config.TUYA_DEVICE_ID_MAIN else "off_peak_heater"
         
         if status_info:
             is_on = status_info.get('is_on', False)
             is_online = status_info.get('online', False)
             
             # Update Internal State Cache
-            key = "peak_heater" if device_id == Config.TUYA_DEVICE_ID_MAIN else "off_peak_heater"
             self.system_state[key]["online"] = is_online
             self.system_state[key]["state"] = "ON" if is_on else "OFF"
             

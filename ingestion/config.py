@@ -19,7 +19,7 @@ class Config:
     SHELLY_DEVICE_ID = os.getenv("SHELLY_DEVICE_ID")
 
     # Octopus
-    OCTOPUS_PRODUCT_CODE = os.getenv('OCTOPUS_PRODUCT_CODE', 'AGILE-18-02-21')
+    OCTOPUS_PRODUCT_CODE = os.getenv('OCTOPUS_PRODUCT_CODE', 'AGILE-24-10-01')
     OCTOPUS_REGION_CODE = os.getenv('OCTOPUS_REGION_CODE', 'C') # Default to London (C)
 
     # Logic - Peak Heater (negative/free energy)

@@ -16,6 +16,7 @@ import {
     ReferenceArea,
     ReferenceLine
 } from "recharts"
+import { getUKDateBoundaries } from "@/lib/date-utils"
 
 interface Rate {
     value_inc_vat: number
@@ -28,41 +29,6 @@ interface ScheduleSlot {
     slot_end: string
     price: number
     heater_type: string
-}
-
-// Helper: Get UK (Europe/London) date boundaries in UTC
-// This ensures "today" always means UK midnight-to-midnight regardless of viewer's timezone
-function getUKDateBoundaries(dayOffset: number = 0): { start: Date; end: Date } {
-    const now = new Date()
-    // Get the current date parts in UK timezone
-    const ukFormatter = new Intl.DateTimeFormat('en-GB', {
-        timeZone: 'Europe/London',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-    })
-    const parts = ukFormatter.formatToParts(now)
-    const year = parseInt(parts.find(p => p.type === 'year')!.value)
-    const month = parseInt(parts.find(p => p.type === 'month')!.value)
-    const day = parseInt(parts.find(p => p.type === 'day')!.value)
-
-    // Build a date string in UK timezone and let the browser resolve the UTC offset
-    // Using Intl to reconstruct: "YYYY-MM-DDT00:00:00" in Europe/London
-    const ukMidnight = new Date(
-        new Date(`${year}-${String(month).padStart(2, '0')}-${String(day + dayOffset).padStart(2, '0')}T00:00:00`)
-            .toLocaleString('en-US', { timeZone: 'Europe/London' })
-    )
-    // More robust: compute the UTC epoch for UK midnight by finding the offset
-    const tempDate = new Date(Date.UTC(year, month - 1, day + dayOffset, 0, 0, 0))
-    // Find the UK offset at this date (handles BST/GMT automatically)
-    const ukTimeStr = tempDate.toLocaleString('en-US', { timeZone: 'Europe/London' })
-    const ukTime = new Date(ukTimeStr)
-    const offsetMs = ukTime.getTime() - tempDate.getTime()
-    // UK midnight in UTC = midnight minus the offset
-    const startUtc = new Date(tempDate.getTime() - offsetMs)
-    const endUtc = new Date(startUtc.getTime() + 24 * 60 * 60 * 1000 - 1) // 23:59:59.999
-
-    return { start: startUtc, end: endUtc }
 }
 
 export function CombinedHistoryChart() {
