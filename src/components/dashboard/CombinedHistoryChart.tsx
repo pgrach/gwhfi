@@ -263,10 +263,8 @@ export function CombinedHistoryChart() {
 
                 const slotReadings = readingsBySlot.get(slotTime) || []
 
-                // Extract power values based on mode
-                // For 7d/30d views: missing data = heater off (0W)
-                // For today/tomorrow: keep null to avoid filling future with zeros
-                const defaultPower = (viewMode === "7d" || viewMode === "30d") ? 0 : null
+                // No reading in this bucket = heater is off (0W)
+                const defaultPower = 0
                 let avg0 = defaultPower
                 let avg1 = defaultPower
 
