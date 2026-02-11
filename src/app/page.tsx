@@ -1,35 +1,33 @@
-import { LiveStatus } from "@/components/dashboard/LiveStatus"
-import { CombinedHistoryChart } from "@/components/dashboard/CombinedHistoryChart"
-import { CurrentRate } from "@/components/dashboard/CurrentRate"
-import { ThemeToggle } from "@/components/ui/theme-toggle"
-import { Zap, Droplet } from "lucide-react"
+import { Navbar } from "@/components/landing/navbar";
+import { HeroSection } from "@/components/landing/sections/hero";
+import { ProblemSection } from "@/components/landing/sections/problem";
+import { SolutionSection } from "@/components/landing/sections/solution";
+import { HowItWorksSection } from "@/components/landing/sections/how-it-works";
+import { DashboardPreviewSection } from "@/components/landing/sections/dashboard-preview";
+import { NumbersSection } from "@/components/landing/sections/numbers";
+import { PartnersSection } from "@/components/landing/sections/partners";
+import { AboutSection } from "@/components/landing/sections/about";
+import { RoadmapSection } from "@/components/landing/sections/roadmap";
+import { CTASection } from "@/components/landing/sections/cta";
+import { Footer } from "@/components/landing/sections/footer";
 
-export default function DashboardPage() {
+export default function Home() {
     return (
-        <div className="flex-1 space-y-4 p-4 md:p-8 pt-6">
-            <div className="flex flex-col md:flex-row items-start md:items-center justify-between space-y-2 md:space-y-0">
-                <div className="flex items-center gap-4">
-                    <div className="relative flex items-center justify-center w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-500 to-cyan-400 text-white shadow-lg shadow-blue-500/25 shrink-0">
-                        <Zap className="w-7 h-7 absolute z-10 fill-white" />
-                        <Droplet className="w-9 h-9 opacity-20 fill-white" />
-                    </div>
-                    <div>
-                        <h2 className="text-2xl md:text-3xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-cyan-500">
-                            SmartWater
-                        </h2>
-                        <p className="text-sm text-muted-foreground font-medium">
-                            Intelligent Heating Dashboard
-                        </p>
-                    </div>
-                </div>
-                <ThemeToggle />
-            </div>
-            <div className="space-y-4">
-                <LiveStatus />
-                <CurrentRate />
-                <CombinedHistoryChart />
-            </div>
+        <div className="landing">
+            <Navbar />
+            <main>
+                <HeroSection />
+                <ProblemSection />
+                <SolutionSection />
+                <HowItWorksSection />
+                <DashboardPreviewSection />
+                <NumbersSection />
+                <PartnersSection />
+                <AboutSection />
+                <RoadmapSection />
+                <CTASection />
+            </main>
+            <Footer />
         </div>
-    )
+    );
 }
-

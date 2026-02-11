@@ -22,3 +22,6 @@ env/
 node_modules/
 out/
 build/
+
+# Temp repos
+v0-landing-page/
