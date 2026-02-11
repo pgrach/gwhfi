@@ -34,7 +34,7 @@ export function DashboardPreviewSection() {
               </span>
             </div>
             <a
-              href="https://www.gwhfi.com/"
+              href="https://www.gwhfi.com/dashboard"
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-1.5 text-xs font-medium text-primary transition-colors hover:text-primary/80"
@@ -185,11 +185,10 @@ export function DashboardPreviewSection() {
                   {["Today", "7d", "30d"].map((label, i) => (
                     <span
                       key={label}
-                      className={`rounded-md px-2.5 py-1 text-xs font-medium ${
-                        i === 0
+                      className={`rounded-md px-2.5 py-1 text-xs font-medium ${i === 0
                           ? "bg-primary/10 text-primary"
                           : "text-muted-foreground"
-                      }`}
+                        }`}
                     >
                       {label}
                     </span>
@@ -235,7 +234,7 @@ export function DashboardPreviewSection() {
         {/* CTA below the dashboard preview */}
         <div className="mt-8 flex flex-col items-center gap-4 sm:flex-row sm:justify-center">
           <a
-            href="https://www.gwhfi.com/"
+            href="https://www.gwhfi.com/dashboard"
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-2 rounded-md bg-primary px-8 py-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"

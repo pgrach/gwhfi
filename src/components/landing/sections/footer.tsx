@@ -2,7 +2,7 @@ const sectionLinks = [
   { label: "Problem", href: "#problem" },
   { label: "Solution", href: "#solution" },
   { label: "How It Works", href: "#how-it-works" },
-  { label: "Live Dashboard", href: "https://www.gwhfi.com/", external: true },
+  { label: "Live Dashboard", href: "https://www.gwhfi.com/dashboard", external: true },
   { label: "Numbers", href: "#numbers" },
   { label: "Partners", href: "#partners" },
   { label: "Roadmap", href: "#roadmap" },
