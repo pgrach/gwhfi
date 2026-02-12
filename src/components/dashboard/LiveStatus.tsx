@@ -183,8 +183,9 @@ export function LiveStatus() {
         : null
 
     // Determine if heaters are ON (power > 100W threshold)
-    const isPeakOn = (main?.power_w ?? 0) > 100
-    const isOffPeakOn = (second?.power_w ?? 0) > 100
+    // FORCE OFF if system is offline (stale data > 15 mins)
+    const isPeakOn = (isOnline ?? false) && (main?.power_w ?? 0) > 100
+    const isOffPeakOn = (isOnline ?? false) && (second?.power_w ?? 0) > 100
 
     // Max power for progress bar (3kW heaters)
     const MAX_POWER = 3200
@@ -215,14 +216,14 @@ export function LiveStatus() {
 
             <div className="grid gap-4 md:grid-cols-2">
                 <PeakHeaterCard
-                    power={main?.power_w ?? 0}
+                    power={(isOnline ?? false) ? (main?.power_w ?? 0) : 0}
                     voltage={main?.voltage ?? 0}
                     energy={main?.energy_total_wh ?? 0}
                     isOn={isPeakOn}
                     maxPower={MAX_POWER}
                 />
                 <OffPeakHeaterCard
-                    power={second?.power_w ?? 0}
+                    power={(isOnline ?? false) ? (second?.power_w ?? 0) : 0}
                     voltage={second?.voltage ?? 0}
                     energy={second?.energy_total_wh ?? 0}
                     isOn={isOffPeakOn}

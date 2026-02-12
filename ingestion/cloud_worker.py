@@ -109,7 +109,41 @@ def process_reading():
             logger.info(f"Channel {idx}: {power}W | {voltage}V | {total}Wh [SKIPPED - OFF]")
 
         # Update last reading tracker
-        last_readings[channel_key] = {"power": power, "voltage": voltage, "total": total}
+        last_update_time = last_reading.get("last_update_time", 0)
+        current_time = time.time()
+        time_since_last_update = current_time - last_update_time
+
+        # Force a heartbeat record every 15 minutes (900 seconds) even if 0W
+        is_heartbeat = time_since_last_update > 900
+
+        if last_power is None:
+            # First reading ever
+            should_record = True
+            logger.info(f"Channel {idx}: {power}W | {voltage}V | {total}Wh [FIRST READING]")
+        elif power > 0:
+            # Heater is on - always record
+            should_record = True
+            logger.info(f"Channel {idx}: {power}W | {voltage}V | {total}Wh [ACTIVE]")
+        elif last_power > 0 and power == 0:
+            # Just turned off - record the off event
+            should_record = True
+            logger.info(f"Channel {idx}: {power}W | {voltage}V | {total}Wh [TURNED OFF]")
+        elif is_heartbeat:
+             # Heartbeat to keep system "Online" in dashboard
+            should_record = True
+            logger.info(f"Channel {idx}: {power}W | {voltage}V | {total}Wh [HEARTBEAT]")
+        else:
+            # Still off - skip recording
+            logger.info(f"Channel {idx}: {power}W | {voltage}V | {total}Wh [SKIPPED - OFF]")
+
+        # Update last reading tracker
+        if should_record:
+            last_readings[channel_key] = {
+                "power": power, 
+                "voltage": voltage, 
+                "total": total,
+                "last_update_time": current_time
+            }
 
         if should_record:
             row = {

@@ -37,6 +37,7 @@ export function CombinedHistoryChart() {
     const [hasRates, setHasRates] = useState(true)
     const [totals, setTotals] = useState({ peak: 0, offPeak: 0 })
     const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
+    const [channelVisible, setChannelVisible] = useState({ peak: true, offPeak: true })
 
     // Configuration for Octopus
     const PRODUCT = "AGILE-24-10-01"
@@ -78,6 +79,10 @@ export function CombinedHistoryChart() {
             let rates: Rate[] = []
             let readings: any[] = []
             let scheduleSlots: ScheduleSlot[] = []
+            let channelHasEnergyMovement = new Map<number, boolean>([
+                [0, true],
+                [1, true],
+            ])
 
             // Explicitly ensure we fetch enough future data if viewing tomorrow
             const ratesPromise = fetch(
@@ -106,8 +111,37 @@ export function CombinedHistoryChart() {
                 .lte('slot_end', endIso)
                 .order('slot_start', { ascending: true })
 
+            const channelMovementPromise = Promise.all([0, 1].map(async (channel) => {
+                const [firstRes, lastRes] = await Promise.all([
+                    supabase
+                        .from('energy_readings')
+                        .select('energy_total_wh, created_at')
+                        .eq('channel', channel)
+                        .gte('created_at', startIso)
+                        .lte('created_at', endIso)
+                        .order('created_at', { ascending: true })
+                        .limit(1),
+                    supabase
+                        .from('energy_readings')
+                        .select('energy_total_wh, created_at')
+                        .eq('channel', channel)
+                        .gte('created_at', startIso)
+                        .lte('created_at', endIso)
+                        .order('created_at', { ascending: false })
+                        .limit(1),
+                ])
+
+                if (firstRes.error || lastRes.error || !firstRes.data?.[0] || !lastRes.data?.[0]) {
+                    return { channel, hasMovement: true }
+                }
+
+                const firstWh = Number(firstRes.data[0].energy_total_wh ?? 0)
+                const lastWh = Number(lastRes.data[0].energy_total_wh ?? 0)
+                return { channel, hasMovement: Math.abs(lastWh - firstWh) > 0.1 }
+            }))
+
             try {
-                const [rData, sData, schedData] = await Promise.all([ratesPromise, readingsPromise, schedulePromise])
+                const [rData, sData, schedData, movementData] = await Promise.all([ratesPromise, readingsPromise, schedulePromise, channelMovementPromise])
                 if (rData.results) {
                     rates = rData.results
                     if (rates.length === 0 && viewMode === "tomorrow") {
@@ -128,6 +162,12 @@ export function CombinedHistoryChart() {
                 } else if (schedData.error) {
                     console.error("Schedule fetch error:", schedData.error)
                 }
+
+                channelHasEnergyMovement = new Map<number, boolean>(movementData.map((m) => [m.channel, m.hasMovement]))
+                setChannelVisible({
+                    peak: !!channelHasEnergyMovement.get(0),
+                    offPeak: !!channelHasEnergyMovement.get(1),
+                })
             } catch (e) {
                 console.error("Fetch error", e)
                 setHasRates(false)
@@ -239,6 +279,13 @@ export function CombinedHistoryChart() {
                 const r1 = slotReadings.find(r => r.channel === 1)
                 avg0 = r0 ? r0.avg_power : defaultPower
                 avg1 = r1 ? r1.avg_power : defaultPower
+
+                if (!channelHasEnergyMovement.get(0)) {
+                    avg0 = 0
+                }
+                if (!channelHasEnergyMovement.get(1)) {
+                    avg1 = 0
+                }
 
                 buckets.push({
                     timestamp,
@@ -503,6 +550,7 @@ export function CombinedHistoryChart() {
                                 stroke="#2563eb"
                                 strokeWidth={2}
                                 dot={false}
+                                hide={!channelVisible.peak}
                             />
                             <Line
                                 yAxisId="right"
@@ -512,6 +560,7 @@ export function CombinedHistoryChart() {
                                 stroke="#16a34a"
                                 strokeWidth={2}
                                 dot={false}
+                                hide={!channelVisible.offPeak}
                             />
                         </LineChart>
                     </ResponsiveContainer>
