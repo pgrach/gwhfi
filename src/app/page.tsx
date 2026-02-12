@@ -19,13 +19,13 @@ export default function Home() {
                 <HeroSection />
                 <ProblemSection />
                 <SolutionSection />
-                <HowItWorksSection />
                 <DashboardPreviewSection />
                 <NumbersSection />
-                <PartnersSection />
-                <AboutSection />
-                <RoadmapSection />
                 <CTASection />
+                <HowItWorksSection />
+                <PartnersSection />
+                <RoadmapSection />
+                <AboutSection />
             </main>
             <Footer />
         </div>

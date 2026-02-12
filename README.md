@@ -57,6 +57,7 @@ This project consists of three main components:
 Ensure your `.env` (or Railway variables) includes:
 *   `BLOCKED_HOURS=[7, 8, 16, 17, 18]`
 *   Tuya Credentials (`TUYA_ACCESS_ID`, `TUYA_ACCESS_KEY`, etc.)
+*   (Optional, for landing page pilot lead notifications) `RESEND_API_KEY`, `LEADS_FROM_EMAIL`, `LEADS_TO_EMAIL`
 *   **Important**: If Tuya control stops working, verify your **IoT Core Trial** hasn't expired. You can extend it for free in the Tuya Console.
 
 **Start Script**:

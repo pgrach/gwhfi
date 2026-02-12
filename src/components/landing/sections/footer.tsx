@@ -83,6 +83,47 @@ export function Footer() {
                 </a>
               </li>
             </ul>
+
+            <h4 className="mb-4 mt-8 text-xs font-medium tracking-widest text-muted-foreground uppercase">
+              Socials
+            </h4>
+            <ul className="flex flex-col gap-2.5">
+              <li>
+                <a
+                  href="https://substack.com/@pavelgrachev"
+                  className="text-sm text-muted-foreground transition-colors hover:text-primary"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Substack
+                </a>
+              </li>
+              <li>
+                <a
+                  href="https://api.whatsapp.com/send?phone=352621665246"
+                  className="text-sm text-muted-foreground transition-colors hover:text-primary"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  WhatsApp
+                </a>
+              </li>
+              <li>
+                <a
+                  href="https://t.me/PaveLGrachev"
+                  className="text-sm text-muted-foreground transition-colors hover:text-primary"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Telegram
+                </a>
+              </li>
+              <li>
+                <span className="text-sm text-muted-foreground">
+                  WeChat: wxid_8dmtu3t8k37v12
+                </span>
+              </li>
+            </ul>
           </div>
         </div>
 

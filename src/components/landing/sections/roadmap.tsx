@@ -4,7 +4,7 @@ const phases = [
   {
     phase: "01",
     title: "Market Analysis",
-    period: "2025",
+    period: "Completed",
     status: "done" as const,
     description:
       "Curtailment data analysis, economic modelling, and identification of the UK hot water cylinder opportunity.",
@@ -12,7 +12,7 @@ const phases = [
   {
     phase: "02",
     title: "Research Partnerships",
-    period: "2025-26",
+    period: "Completed",
     status: "done" as const,
     description:
       "Collaboration with Universities on thermodynamic and grid integration feasibility.",
@@ -20,7 +20,7 @@ const phases = [
   {
     phase: "03",
     title: "Hardware Prototype",
-    period: "2025",
+    period: "Completed",
     status: "done" as const,
     description:
       "First ASIC heater prototype built with Winchain, validated in lab conditions for heat output and hash rate.",
@@ -28,7 +28,7 @@ const phases = [
   {
     phase: "04",
     title: "Commercial Pilot",
-    period: "2025",
+    period: "In progress",
     status: "active" as const,
     description:
       "Initial deployment in commercial hot water systems. Real-world data on energy absorption, revenue, and grid interaction.",
@@ -36,7 +36,7 @@ const phases = [
   {
     phase: "05",
     title: "Aggregation Platform",
-    period: "2025-26",
+    period: "Planned",
     status: "upcoming" as const,
     description:
       "Cloud-based fleet management, NESO integration, and demand-side response qualification.",
@@ -44,7 +44,7 @@ const phases = [
   {
     phase: "06",
     title: "Domestic Pilot",
-    period: "2026-27",
+    period: "Planned",
     status: "upcoming" as const,
     description:
       "Scaled deployment into UK households. Consumer-ready product, installer partnerships, and national rollout preparation.",

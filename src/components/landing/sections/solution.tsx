@@ -5,21 +5,21 @@ const streams = [
     icon: Flame,
     title: "Hot Water",
     description:
-      "Every watt of compute power becomes a watt of heat. Our ASIC heater replaces the standard immersion element inside your hot water cylinder, providing domestic hot water at zero marginal energy cost during curtailment periods.",
+      "Our ASIC heater replaces a standard immersion element. Compute power is captured as heat and stored in the cylinder for domestic hot water.",
     detail: "100% thermal capture",
   },
   {
     icon: Bitcoin,
     title: "Bitcoin Revenue",
     description:
-      "While heating water, the ASIC performs SHA-256 proof-of-work computations. No third-party contractual risks. Revenue from mined Bitcoin directly offsets energy costs and provides a direct financial return to the asset owner or aggregator.",
+      "While heating water, the device mines Bitcoin. That revenue helps offset operating costs and can improve pilot economics.",
     detail: "Passive income stream",
   },
   {
     icon: Cable,
     title: "Grid Flexibility Payments",
     description:
-      "Aggregated GWhFi units act as programmable demand-side response assets. By absorbing surplus generation on command, they earn flexibility payments from NESO and reduce curtailment costs for all bill-payers.",
+      "Aggregated units can act as controllable demand, absorbing surplus generation and participating in flexibility programs where eligible.",
     detail: "Demand-side response",
   },
 ];
@@ -35,9 +35,9 @@ export function SolutionSection() {
           One device. Three value streams.
         </h2>
         <p className="mt-4 max-w-2xl text-lg leading-relaxed text-muted-foreground text-pretty">
-          The GWhFi ASIC heater is a programmable device that sits inside a
-          standard hot water cylinder. It converts surplus renewable electricity
-          into heat, compute, and grid services simultaneously.
+          GWhFi is a programmable ASIC heater for standard hot-water cylinders.
+          It turns surplus electricity into heat and monetisable compute, with
+          flexibility participation layered in as deployments scale.
         </p>
 
         <div className="mt-16 grid grid-cols-1 gap-6 md:grid-cols-3">

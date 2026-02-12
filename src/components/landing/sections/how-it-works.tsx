@@ -21,7 +21,7 @@ const deployments = [
     icon: Home,
     title: "Domestic",
     description:
-      "A single GWhFi unit replaces the immersion element in a household hot water cylinder. It connects to the home Wi-Fi and is remotely managed by our aggregation platform. Homeowners receive hot water and a share of Bitcoin and flexibility revenue. No lifestyle changes required.",
+      "A single unit replaces the immersion element in a household cylinder. It is remotely managed and designed to deliver hot water with optional revenue sharing where available.",
     specs: [
       { label: "Power", value: "2 kW" },
       { label: "Fits", value: "Standard UK cylinder" },
@@ -33,7 +33,7 @@ const deployments = [
     icon: Building2,
     title: "Commercial",
     description:
-      "Multi-unit deployments in hotels, care homes, leisure centres, and student accommodation. Larger hot water demand means higher utilisation and revenue. GWhFi provides full system design, installation, and operational management under a service-level agreement.",
+      "Multi-unit deployments suit hotels, care homes, leisure sites, and student accommodation. Higher hot-water demand improves utilisation. GWhFi supports design, installation, and operations.",
     specs: [
       { label: "Power", value: "10-100 kW" },
       { label: "Sites", value: "High hot-water demand" },
@@ -45,10 +45,10 @@ const deployments = [
     icon: Network,
     title: "Aggregation Platform",
     description:
-      "Thousands of GWhFi units, both domestic and commercial, aggregate into a single virtual power plant. The platform receives dispatch signals from NESO and activates or deactivates heaters in real time to absorb excess generation and provide frequency response.",
+      "Domestic and commercial units can be orchestrated as aggregated flexible demand. The platform schedules devices to absorb surplus generation and support grid services where qualified.",
     specs: [
-      { label: "Scale", value: "GW-class fleet" },
-      { label: "Response", value: "Sub-second dispatch" },
+      { label: "Scale", value: "Fleet aggregation" },
+      { label: "Response", value: "Automated dispatch" },
       { label: "Revenue", value: "FFR / DC / BM" },
     ],
   },

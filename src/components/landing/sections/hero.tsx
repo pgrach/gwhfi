@@ -41,13 +41,13 @@ export function HeroSection() {
         </div>
 
         <h1 className="font-serif text-4xl font-bold leading-tight tracking-tight text-foreground md:text-6xl lg:text-7xl text-balance">
-          Turning Wasted Energy Into Heat and Revenue
+          Turn Curtailed Energy Into Hot Water and Cashflow
         </h1>
 
         <p className="mx-auto mt-6 max-w-2xl text-lg leading-relaxed text-muted-foreground md:text-xl text-pretty">
-          Programmable ASIC heaters that replace immersion elements in hot water
-          cylinders. Heat water. Mine Bitcoin. Earn grid flexibility payments.
-          All from surplus renewable energy.
+          We replace immersion heaters with programmable ASIC units that absorb
+          surplus renewable power and create three outputs: hot water, Bitcoin
+          revenue, and demand flexibility income.
         </p>
 
         <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
@@ -55,13 +55,13 @@ export function HeroSection() {
             href="#contact"
             className="rounded-md bg-primary px-8 py-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
           >
-            Partner With Us
+            Book Pilot Call
           </a>
           <a
             href="#solution"
             className="rounded-md border border-border px-8 py-3 text-sm font-medium text-foreground transition-colors hover:bg-secondary"
           >
-            Learn More
+            See How It Works
           </a>
         </div>
       </div>

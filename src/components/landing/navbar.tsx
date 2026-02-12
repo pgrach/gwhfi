@@ -6,11 +6,12 @@ import { Menu, X } from "lucide-react";
 const navLinks = [
   { label: "Problem", href: "#problem" },
   { label: "Solution", href: "#solution" },
-  { label: "How It Works", href: "#how-it-works" },
   { label: "Dashboard", href: "#dashboard" },
   { label: "Numbers", href: "#numbers" },
+  { label: "How It Works", href: "#how-it-works" },
   { label: "Partners", href: "#partners" },
   { label: "Roadmap", href: "#roadmap" },
+  { label: "About", href: "#about" },
 ];
 
 export function Navbar() {
@@ -40,7 +41,7 @@ export function Navbar() {
             href="#contact"
             className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
           >
-            Get in Touch
+            Book Pilot Call
           </a>
         </div>
 
@@ -74,7 +75,7 @@ export function Navbar() {
               className="mt-2 rounded-md bg-primary px-4 py-2 text-center text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
               onClick={() => setOpen(false)}
             >
-              Get in Touch
+              Book Pilot Call
             </a>
           </div>
         </div>
