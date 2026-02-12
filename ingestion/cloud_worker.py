@@ -90,23 +90,8 @@ def process_reading():
         # 1. Power > 0 (heater is on)
         # 2. Power changed from non-zero to zero (heater just turned off)
         # 3. First reading (last_power is None)
+        # 4. Heartbeat every 15 min to keep dashboard online visibility
         should_record = False
-
-        if last_power is None:
-            # First reading ever
-            should_record = True
-            logger.info(f"Channel {idx}: {power}W | {voltage}V | {total}Wh [FIRST READING]")
-        elif power > 0:
-            # Heater is on - always record
-            should_record = True
-            logger.info(f"Channel {idx}: {power}W | {voltage}V | {total}Wh [ACTIVE]")
-        elif last_power > 0 and power == 0:
-            # Just turned off - record the off event
-            should_record = True
-            logger.info(f"Channel {idx}: {power}W | {voltage}V | {total}Wh [TURNED OFF]")
-        else:
-            # Still off - skip recording
-            logger.info(f"Channel {idx}: {power}W | {voltage}V | {total}Wh [SKIPPED - OFF]")
 
         # Update last reading tracker
         last_update_time = last_reading.get("last_update_time", 0)

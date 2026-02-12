@@ -38,92 +38,12 @@ interface OctopusResponse {
     results: RateApiResult[]
 }
 
-interface DebugWindowSummary {
-    start_iso: string
-    end_iso: string
-    channel_stats: Array<{
-        channel: number
-        points_in_window: number
-        segments_in_window: number
-        positive_segments: number
-        positive_kwh: number
-        negative_or_zero_segments: number
-        first_timestamp: string | null
-        last_timestamp: string | null
-    }>
-}
-
 function round(value: number, digits: number): number {
     return Number(value.toFixed(digits))
 }
 
 function overlaps(aStart: number, aEnd: number, bStart: number, bEnd: number): boolean {
     return aStart < bEnd && aEnd > bStart
-}
-
-function summarizeWindow(
-    readingsByChannel: EnergyReading[][],
-    startMs: number,
-    endMs: number
-): DebugWindowSummary {
-    const channelStats = readingsByChannel.map((readings, channel) => {
-        const pointsInWindow = readings.filter((r) => {
-            const ts = new Date(r.created_at).getTime()
-            return Number.isFinite(ts) && ts >= startMs && ts <= endMs
-        })
-
-        let segmentsInWindow = 0
-        let positiveSegments = 0
-        let positiveKwh = 0
-        let nonPositiveSegments = 0
-
-        for (let index = 1; index < readings.length; index++) {
-            const previous = readings[index - 1]
-            const current = readings[index]
-            const previousMs = new Date(previous.created_at).getTime()
-            const currentMs = new Date(current.created_at).getTime()
-            if (!Number.isFinite(previousMs) || !Number.isFinite(currentMs) || currentMs <= previousMs) {
-                continue
-            }
-
-            const segmentStart = Math.max(previousMs, startMs)
-            const segmentEnd = Math.min(currentMs, endMs)
-            if (segmentEnd <= segmentStart) {
-                continue
-            }
-
-            segmentsInWindow += 1
-            const deltaWh = current.energy_total_wh - previous.energy_total_wh
-            if (Number.isFinite(deltaWh) && deltaWh > 0) {
-                positiveSegments += 1
-                const fullSegmentDurationMs = currentMs - previousMs
-                const clippedDurationMs = segmentEnd - segmentStart
-                const clippedDeltaKwh = (deltaWh / 1000) * (clippedDurationMs / fullSegmentDurationMs)
-                if (Number.isFinite(clippedDeltaKwh) && clippedDeltaKwh > 0) {
-                    positiveKwh += clippedDeltaKwh
-                }
-            } else {
-                nonPositiveSegments += 1
-            }
-        }
-
-        return {
-            channel,
-            points_in_window: pointsInWindow.length,
-            segments_in_window: segmentsInWindow,
-            positive_segments: positiveSegments,
-            positive_kwh: round(positiveKwh, 4),
-            negative_or_zero_segments: nonPositiveSegments,
-            first_timestamp: pointsInWindow[0]?.created_at ?? null,
-            last_timestamp: pointsInWindow[pointsInWindow.length - 1]?.created_at ?? null,
-        }
-    })
-
-    return {
-        start_iso: new Date(startMs).toISOString(),
-        end_iso: new Date(endMs).toISOString(),
-        channel_stats: channelStats,
-    }
 }
 
 async function fetchRates(startIso: string, endIso: string): Promise<RateInterval[]> {
@@ -280,7 +200,7 @@ function computeWindowResult(
     }
 }
 
-export async function GET(request: Request) {
+export async function GET() {
     try {
         const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
         const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
@@ -325,34 +245,6 @@ export async function GET(request: Request) {
             yesterdayBounds.end.getTime()
         )
 
-        const debugMode = new URL(request.url).searchParams.get("debug") === "1"
-
-        const debug = debugMode
-            ? {
-                reading_counts: {
-                    channel0: channel0Readings.length,
-                    channel1: channel1Readings.length,
-                },
-                windows: {
-                    yesterday: summarizeWindow(
-                        readingsByChannel,
-                        yesterdayBounds.start.getTime(),
-                        yesterdayBounds.end.getTime()
-                    ),
-                    last7d: summarizeWindow(
-                        readingsByChannel,
-                        sevenDayStart.getTime(),
-                        yesterdayBounds.end.getTime()
-                    ),
-                    last30d: summarizeWindow(
-                        readingsByChannel,
-                        thirtyDayStart.getTime(),
-                        yesterdayBounds.end.getTime()
-                    ),
-                },
-            }
-            : undefined
-
         return NextResponse.json({
             scope: "all_heaters_combined",
             method: "kwh_weighted_avg_price_paid",
@@ -360,7 +252,6 @@ export async function GET(request: Request) {
             yesterday,
             last7d,
             last30d,
-            debug,
             generated_at: new Date().toISOString(),
         })
     } catch {

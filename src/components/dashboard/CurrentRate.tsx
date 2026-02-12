@@ -13,23 +13,10 @@ interface Rate {
     valid_to: string
 }
 
-interface PaidPriceWindow {
-    avg_paid_ppkwh: number | null
-    total_kwh_priced: number
-    total_kwh_measured: number
-}
-
-interface EnergyStatsResponse {
-    yesterday: PaidPriceWindow
-    last7d: PaidPriceWindow
-    last30d: PaidPriceWindow
-}
-
 export function CurrentRate() {
     const [currentRate, setCurrentRate] = useState<Rate | null>(null)
     const [avgRate, setAvgRate] = useState<number>(0)
     const [nextSmartSlot, setNextSmartSlot] = useState<string | null>(null)
-    const [paidStats, setPaidStats] = useState<EnergyStatsResponse | null>(null)
     const [loading, setLoading] = useState(true)
 
     const PRODUCT = "AGILE-24-10-01"
@@ -42,7 +29,7 @@ export function CurrentRate() {
                 const now = new Date()
                 const { start: startOfDay, end: endOfDay } = getUKDateBoundaries(0)
 
-                const [response, scheduleResponse, paidStatsResponse] = await Promise.all([
+                const [response, scheduleResponse] = await Promise.all([
                     fetch(
                         `https://api.octopus.energy/v1/products/${PRODUCT}/electricity-tariffs/${TARIFF}/standard-unit-rates/?period_from=${startOfDay.toISOString()}&period_to=${endOfDay.toISOString()}`
                     ),
@@ -51,19 +38,13 @@ export function CurrentRate() {
                         .select('*')
                         .gt('slot_start', now.toISOString())
                         .order('slot_start', { ascending: true })
-                        .limit(1),
-                    fetch('/api/energy-stats', { cache: 'no-store' })
+                        .limit(1)
                 ])
 
                 const data = await response.json()
                 const rates: Rate[] = data.results || []
 
                 const scheduleData = scheduleResponse.data
-
-                if (paidStatsResponse.ok) {
-                    const paidStatsData: EnergyStatsResponse = await paidStatsResponse.json()
-                    setPaidStats(paidStatsData)
-                }
 
                 if (rates.length === 0) {
                     setLoading(false)
@@ -132,22 +113,6 @@ export function CurrentRate() {
 
     const isSmart = currentRate && currentRate.value_inc_vat <= avgRate
     const isNegative = currentRate && currentRate.value_inc_vat <= 0
-    const formatPaidPrice = (window: PaidPriceWindow | null | undefined) => {
-        if (!window) {
-            return "—"
-        }
-        if (window.avg_paid_ppkwh != null) {
-            return `${window.avg_paid_ppkwh.toFixed(2)}p/kWh`
-        }
-        if (window.total_kwh_measured <= 0) {
-            return "No usage"
-        }
-        if (window.total_kwh_priced <= 0) {
-            return "No priced data"
-        }
-        return "—"
-    }
-
     return (
         <Card className={`transition-all duration-300 ${isNegative
             ? "bg-gradient-to-br from-green-500/20 to-emerald-500/20 border-green-500/40 shadow-lg shadow-green-500/10"
@@ -172,7 +137,7 @@ export function CurrentRate() {
                             )}
                         </div>
                         <div>
-                            <p className="text-sm text-muted-foreground font-medium">Current Rate</p>
+                            <p className="text-sm text-muted-foreground font-medium">Live Electricity Rate</p>
                             <div className="flex items-center gap-2">
                                 <span className={`text-2xl font-bold ${isNegative ? "text-green-500" : isSmart ? "text-emerald-500" : ""
                                     }`}>
@@ -198,23 +163,8 @@ export function CurrentRate() {
                     {/* Daily Average */}
                     <div className="flex items-center gap-4">
                         <div className="text-center sm:text-left">
-                            <p className="text-sm text-muted-foreground font-medium">Daily Average</p>
+                            <p className="text-sm text-muted-foreground font-medium">Agile Daily Average</p>
                             <span className="text-lg font-semibold">{avgRate.toFixed(2)}p/kWh</span>
-                        </div>
-                    </div>
-
-                    {/* Divider */}
-                    <div className="hidden sm:block w-px h-12 bg-border"></div>
-
-                    {/* Paid Average (Heaters) */}
-                    <div className="flex items-center gap-4">
-                        <div>
-                            <p className="text-sm text-muted-foreground font-medium">Heaters Paid Avg</p>
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-1 sm:gap-3 text-sm">
-                                <span><span className="text-muted-foreground">Y:</span> {formatPaidPrice(paidStats?.yesterday)}</span>
-                                <span><span className="text-muted-foreground">7d:</span> {formatPaidPrice(paidStats?.last7d)}</span>
-                                <span><span className="text-muted-foreground">30d:</span> {formatPaidPrice(paidStats?.last30d)}</span>
-                            </div>
                         </div>
                     </div>
 
@@ -225,7 +175,7 @@ export function CurrentRate() {
                     <div className="flex items-center gap-3">
                         <Clock className="w-5 h-5 text-muted-foreground" />
                         <div>
-                            <p className="text-sm text-muted-foreground font-medium">Next Smart Slot</p>
+                            <p className="text-sm text-muted-foreground font-medium">Next Scheduled Heating</p>
                             <span className="text-lg font-semibold whitespace-nowrap">
                                 {nextSmartSlot || "—"}
                             </span>

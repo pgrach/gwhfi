@@ -350,7 +350,7 @@ export function CombinedHistoryChart() {
         return (
             <Card className="col-span-4">
                 <CardHeader>
-                    <CardTitle>Combined History (Power & Rates)</CardTitle>
+                    <CardTitle>Usage & Price History</CardTitle>
                 </CardHeader>
                 <CardContent className="h-[400px] flex items-center justify-center">
                     <div className="text-center space-y-4">
@@ -414,7 +414,7 @@ export function CombinedHistoryChart() {
             <CardHeader className="flex flex-col space-y-4 sm:flex-row sm:items-center sm:justify-between sm:space-y-0 pb-2">
                 <div className="space-y-1">
                     <div className="flex items-center gap-3">
-                        <CardTitle className="text-xl sm:text-2xl">Combined History</CardTitle>
+                        <CardTitle className="text-xl sm:text-2xl">Usage & Price History</CardTitle>
                         {lastUpdate && (
                             <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${systemStatus === "active"
                                 ? "bg-green-500/10 text-green-600 border border-green-500/20"
@@ -427,12 +427,12 @@ export function CombinedHistoryChart() {
                         )}
                     </div>
                     <CardDescription className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-0">
-                        <span>Total Consumption:</span>
+                        <span>Total heater usage in selected range:</span>
                         <span className="hidden sm:inline text-muted-foreground mx-2">|</span>
                         <div className="flex gap-4 sm:gap-0">
-                            <span className="text-blue-500 font-bold whitespace-nowrap">Peak: {totals.peak.toFixed(2)} kWh</span>
+                            <span className="text-blue-500 font-bold whitespace-nowrap">Boost: {totals.peak.toFixed(2)} kWh</span>
                             <span className="hidden sm:inline text-muted-foreground mx-2">|</span>
-                            <span className="text-green-600 font-bold whitespace-nowrap">Off-Peak: {totals.offPeak.toFixed(2)} kWh</span>
+                            <span className="text-green-600 font-bold whitespace-nowrap">Storage: {totals.offPeak.toFixed(2)} kWh</span>
                         </div>
                     </CardDescription>
                 </div>
@@ -497,7 +497,7 @@ export function CombinedHistoryChart() {
                                 axisLine={false}
                                 domain={[0, 'dataMax + 5']}
                                 tickFormatter={(value) => `${value}p`}
-                                label={{ value: 'Price (p/kWh)', angle: -90, position: 'insideLeft', fill: '#f050f8' }}
+                                label={{ value: 'Agile Rate (p/kWh)', angle: -90, position: 'insideLeft', fill: '#f050f8' }}
                             />
                             {/* Right Axis: Power */}
                             <YAxis
@@ -546,7 +546,7 @@ export function CombinedHistoryChart() {
                                 yAxisId="right"
                                 type="stepAfter"
                                 dataKey="power_0"
-                                name="Peak Heater (W)"
+                                name="Boost Heater (W)"
                                 stroke="#2563eb"
                                 strokeWidth={2}
                                 dot={false}
@@ -556,7 +556,7 @@ export function CombinedHistoryChart() {
                                 yAxisId="right"
                                 type="stepAfter"
                                 dataKey="power_1"
-                                name="Off-Peak Heater (W)"
+                                name="Storage Heater (W)"
                                 stroke="#16a34a"
                                 strokeWidth={2}
                                 dot={false}
