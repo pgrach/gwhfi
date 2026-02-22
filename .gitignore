@@ -1,7 +1,7 @@
 # Secrets
 .env
 .env.local
-
+tinytuya.json
 # Python
 __pycache__/
 *.py[cod]
