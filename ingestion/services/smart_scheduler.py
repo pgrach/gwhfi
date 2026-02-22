@@ -27,11 +27,12 @@ class SmartScheduler:
         self.tomorrow_scheduled = False
         self.current_schedule = []
 
-    def compute_optimal_slots(self, rates, budget_hours, max_price, use_below_average, blocked_hours):
+    def compute_schedule_for_date(self, target_date, rates, budget_hours, max_price, use_below_average, blocked_hours):
         """
-        Main algorithm to select optimal heating slots.
+        Main algorithm to select optimal heating slots for a specific calendar date.
 
         Args:
+            target_date: datetime.date object representing the day to schedule
             rates: List of rate dicts with 'valid_from', 'valid_to', 'value_inc_vat'
             budget_hours: Total hours of heating needed (e.g., 4.0)
             max_price: Absolute maximum price in pence (e.g., 30.0)
@@ -39,29 +40,34 @@ class SmartScheduler:
             blocked_hours: List of hours to never heat during (e.g., [7, 8] for 07:00-09:00)
 
         Returns:
-            List of selected rate slots, sorted chronologically
+            List of selected rate slots for the target_date, sorted chronologically
         """
         if not rates:
             logger.warning("No rates provided to scheduler.")
             return []
 
+        # Filter rates to only match the target_date
+        daily_rates = [r for r in rates if r['valid_from'].date() == target_date]
+
+        if not daily_rates:
+            logger.warning(f"No rates found for target date: {target_date}")
+            return []
+
         # Calculate daily average
-        daily_avg = sum(r['value_inc_vat'] for r in rates) / len(rates)
+        daily_avg = sum(r['value_inc_vat'] for r in daily_rates) / len(daily_rates)
 
         # Determine price thresholds
-        # strict_threshold: used for "fill" logic to pick only truly cheap slots
-        # hard_limit: absolute max price we are willing to pay for "boosts"
         strict_threshold = min(daily_avg, max_price) if use_below_average else max_price
         hard_limit = max_price
 
-        logger.info(f"Smart Scheduler: Daily avg={daily_avg:.2f}p, Strict Threshold={strict_threshold:.2f}p, Hard Limit={hard_limit:.2f}p")
+        logger.info(f"Smart Scheduler [{target_date}]: Daily avg={daily_avg:.2f}p, Strict Threshold={strict_threshold:.2f}p, Hard Limit={hard_limit:.2f}p")
 
         # Filter eligible slots (HARD LIMIT ONLY)
         eligible = []
         rejected_expensive = []
         rejected_blocked = []
 
-        for slot in rates:
+        for slot in daily_rates:
             hour = slot['valid_from'].hour
 
             # Check if hour is blocked
@@ -82,93 +88,60 @@ class SmartScheduler:
         evening_slots_needed = 2 # 1 Hour for Evening Boost
 
         # --- STEP 1: Secure Afternoon Boost (14:00 - 16:00) ---
-        # User wants 1 hour of heating in the afternoon if price < MAX
         afternoon_candidates = []
         for slot in eligible:
             h = slot['valid_from'].hour
-            # Check 14:00 <= h < 16:00
             if 14 <= h < 16:
                 afternoon_candidates.append(slot)
         
-        # Sort by price and pick cheapest 2 slots (1 hour)
         afternoon_candidates.sort(key=lambda s: s['value_inc_vat'])
         selected_afternoon = afternoon_candidates[:afternoon_slots_needed]
-        
-        if len(selected_afternoon) < afternoon_slots_needed:
-             logger.warning(f"Could not find {afternoon_slots_needed} cheap slots in afternoon. Found {len(selected_afternoon)}.")
 
         # --- STEP 2: Secure Evening Boost (19:00 - 23:30) ---
-        # User wants maintain heat after dinner.
         evening_candidates = []
         for slot in eligible:
             h = slot['valid_from'].hour
             m = slot['valid_from'].minute
-            # Check 19:00 <= t < 23:30
             if 19 <= h < 23 or (h == 23 and m < 30):
-                # Ensure we don't pick slots already picked in afternoon (unlikely given time windows, but good practice)
                 if slot not in selected_afternoon:
                     evening_candidates.append(slot)
         
-        # Sort by price and pick cheapest slots
         evening_candidates.sort(key=lambda s: s['value_inc_vat'])
         selected_evening = evening_candidates[:evening_slots_needed]
 
-        if len(selected_evening) < evening_slots_needed:
-             logger.warning(f"Could not find {evening_slots_needed} cheap slots in evening. Found {len(selected_evening)}.")
-
         # --- STEP 3: Fill Logic (Night/Rest of Day) ---
-        # Remaining slots needed
         remaining_slots_count = total_slots_needed - len(selected_afternoon) - len(selected_evening)
         if remaining_slots_count < 0:
             remaining_slots_count = 0
         
-        # Filter out slots already selected
         selected_ids = {f"{s['valid_from']}" for s in selected_afternoon + selected_evening}
         
-        # Apply STRICT threshold for the fill logic
         remaining_candidates = [
             s for s in eligible 
             if f"{s['valid_from']}" not in selected_ids 
             and s['value_inc_vat'] <= strict_threshold
         ]
         
-        # Sort remaining by price
-        
-        # Pick the best of the rest
-        # JUST-IN-TIME LOGIC:
-        # We want to prefer later slots to minimize standing losses and prevent early saturation.
-        # We apply a small "virtual discount" to later hours for sorting purposes.
-        # -0.01p per hour means 05:00 is "0.05p cheaper" than 00:00.
-        # This breaks ties and near-ties in favor of later slots.
         def effective_price(slot):
             price = slot['value_inc_vat']
             hour_index = slot['valid_from'].hour
-            # Penalize earlier hours slightly.
-            # price - (0.01 * hour) -> Higher hour = Lower effective price
             return price - (0.01 * hour_index)
 
         remaining_candidates.sort(key=effective_price)
-
         selected_rest = remaining_candidates[:remaining_slots_count]
         
         # Combine
         final_selection = selected_afternoon + selected_evening + selected_rest
-        
-        # Sort chronologically
         final_selection.sort(key=lambda s: s['valid_from'])
         
-        # Log the schedule
-        self._log_schedule_summary(final_selection, rejected_expensive, rejected_blocked, strict_threshold, daily_avg)
-        
-        self.current_schedule = final_selection
-        self.last_schedule_computation = datetime.utcnow()
+        self._log_schedule_summary(target_date, final_selection, rejected_expensive, rejected_blocked, strict_threshold, daily_avg)
         
         return final_selection
 
-    def _log_schedule_summary(self, selected, rejected_expensive, rejected_blocked, threshold, daily_avg):
+    def _log_schedule_summary(self, target_date, selected, rejected_expensive, rejected_blocked, threshold, daily_avg):
         """Logs a clear summary of the computed schedule."""
         logger.info("=" * 60)
-        logger.info("SMART SCHEDULE COMPUTED")
+        logger.info(f"SMART SCHEDULE COMPUTED FOR {target_date}")
         logger.info("=" * 60)
         logger.info(f"Daily Average: {daily_avg:.2f}p | Price Threshold: {threshold:.2f}p")
         logger.info(f"Budget: {len(selected) * 0.5:.1f} hours ({len(selected)} x 30-min slots)")

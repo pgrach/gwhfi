@@ -89,6 +89,8 @@ class SmartWaterController:
         Replaces the old fixed 3-Window Strategy with dynamic rate-based scheduling.
         """
         now = self.time_service.now()
+        today = now.date()
+        tomorrow = today + timedelta(days=1)
 
         # Reset daily flags at midnight
         if now.hour == 0 and now.minute < 2:
@@ -103,11 +105,11 @@ class SmartWaterController:
 
         self.scheduler.mark_rate_check(now)
 
-        # Filter to future rates only
+        # Filter to future rates only for free heater
         future_rates = [r for r in rates if r['valid_to'] > now]
 
-        if not future_rates:
-            logger.warning("No future rates available. Waiting for next update.")
+        if not rates:
+            logger.warning("No rates available. Waiting for next update.")
             return
 
         # Check if we have tomorrow's rates
@@ -117,16 +119,31 @@ class SmartWaterController:
             logger.info("Tomorrow's rates are now available! Computing optimized schedule...")
             self.scheduler.mark_tomorrow_scheduled()
 
-        # Compute optimal slots using Smart Scheduler
-        self.main_heater_slots = self.scheduler.compute_optimal_slots(
-            rates=future_rates,
+        # Compute optimal slots using Smart Scheduler for today and tomorrow separately
+        today_slots = self.scheduler.compute_schedule_for_date(
+            target_date=today,
+            rates=rates,
             budget_hours=Config.DAILY_HEATING_BUDGET_HOURS,
             max_price=Config.ABSOLUTE_MAX_PRICE,
             use_below_average=Config.USE_BELOW_AVERAGE,
             blocked_hours=Config.BLOCKED_HOURS
         )
+        
+        tomorrow_slots = []
+        if has_tomorrow:
+            tomorrow_slots = self.scheduler.compute_schedule_for_date(
+                target_date=tomorrow,
+                rates=rates,
+                budget_hours=Config.DAILY_HEATING_BUDGET_HOURS,
+                max_price=Config.ABSOLUTE_MAX_PRICE,
+                use_below_average=Config.USE_BELOW_AVERAGE,
+                blocked_hours=Config.BLOCKED_HOURS
+            )
 
-        # Peak Heater: Negative/free rate strategy (unchanged)
+        self.main_heater_slots = today_slots + tomorrow_slots
+        self.scheduler.current_schedule = self.main_heater_slots
+
+        # Peak Heater: Negative/free rate strategy (unchanged, uses future_rates)
         self.second_heater_slots = self.octopus.get_negative_rates(
             future_rates, Config.SECOND_HEATER_THRESHOLD
         )
@@ -225,25 +242,20 @@ class SmartWaterController:
 
     def apply_device_state(self, device_id, target_state, device_name, slot_info=None):
         """Applies state to device if needed."""
-        status_info = self.tuya.get_status(device_id) 
-        
-        is_on = False
-        is_online = False
         key = "peak_heater" if device_id == Config.TUYA_DEVICE_ID_MAIN else "off_peak_heater"
         
-        if status_info:
-            is_on = status_info.get('is_on', False)
-            is_online = status_info.get('online', False)
-            
-            # Update Internal State Cache
-            self.system_state[key]["online"] = is_online
-            self.system_state[key]["state"] = "ON" if is_on else "OFF"
-            
+        # Pull from internal cache instead of polling Tuya API directly
+        current_state_str = self.system_state[key].get("state", "UNKNOWN")
+        is_online = self.system_state[key].get("online", False)
+        
+        # Convert "ON"/"OFF" string to boolean for comparison
+        is_on = (current_state_str == "ON")
+        
         if not is_online:
-            logger.warning(f"⚠️ {device_name} reported OFFLINE. Attempting control anyway...")
+            logger.warning(f"⚠️ {device_name} reported OFFLINE in cache. Attempting control anyway...")
             # Do NOT return, try to send command
         
-        if is_on != target_state:
+        if is_on != target_state or current_state_str == "UNKNOWN":
             action = "Turning ON" if target_state else "Turning OFF"
             reason = f"Slot: {slot_info['value_inc_vat']}p until {slot_info['valid_to']}" if slot_info else "No active slot"
             
@@ -253,6 +265,7 @@ class SmartWaterController:
             logger.info(f"{action} {device_name} ({reason})")
             
             if not self.dry_run:
+                # Send the actual command
                 if target_state:
                     self.tuya.turn_on(device_id)
                     self.system_state[key]["state"] = "ON"
