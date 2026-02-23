@@ -266,12 +266,19 @@ class SmartWaterController:
             
             if not self.dry_run:
                 # Send the actual command
+                result = None
                 if target_state:
-                    self.tuya.turn_on(device_id)
+                    result = self.tuya.turn_on(device_id)
+                else:
+                    result = self.tuya.turn_off(device_id)
+                    
+                # Handle Tuya response explicitly
+                if isinstance(result, dict) and result.get('quota_exceeded'):
+                    logger.error(f"⚠️ TUYA API FAILURE: Quota is exhausted. Forcing {device_name} to remain ON as failsafe!")
                     self.system_state[key]["state"] = "ON"
                 else:
-                    self.tuya.turn_off(device_id)
-                    self.system_state[key]["state"] = "OFF"
+                    # Assume success or normal failure, update cache to what we tried to set it to
+                    self.system_state[key]["state"] = "ON" if target_state else "OFF"
             else:
                 logger.info("[DRY RUN] Command skipped.")
 
@@ -288,7 +295,11 @@ class SmartWaterController:
             if not dev_id: continue
             
             status = self.tuya.get_status(dev_id)
-            if status:
+            if isinstance(status, dict) and status.get('quota_exceeded'):
+                logger.error(f"⚠️ {name}: TUYA API QUOTA EXHAUSTED! Forcing State to ON.")
+                self.system_state[key]["online"] = True
+                self.system_state[key]["state"] = "ON"
+            elif status and status.get('success', False):
                 is_online = status.get('online', False)
                 state = "ON" if status.get('is_on') else "OFF"
                 

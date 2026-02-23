@@ -36,6 +36,12 @@ class TuyaManager:
         try:
             # Use cloudrequest to get full device details including 'online' status
             result = self.cloud.cloudrequest(f'/v1.0/devices/{device_id}')
+            
+            # Check for API Quota Exceeded Error (Code 28841004)
+            if result and not result.get('success', True) and result.get('code') == 28841004:
+                logger.error(f"🚨 TUYA API QUOTA EXCEEDED! Status fetch for {device_id} blocked by Tuya Cloud.")
+                return {'success': False, 'quota_exceeded': True, 'raw': result}
+                
             if result and 'result' in result:
                 data = result['result']
                 online = data.get('online', False)
@@ -50,12 +56,13 @@ class TuyaManager:
                 return {
                     'online': online,
                     'is_on': switch_state,
-                    'raw': data
+                    'raw': data,
+                    'success': True
                 }
-            return None
+            return {'success': False, 'raw': result}
         except Exception as e:
             logger.error(f"Error getting status for device {device_id}: {e}")
-            return None
+            return {'success': False, 'error': str(e)}
 
     def turn_on(self, device_id):
         return self._send_command(device_id, True)
@@ -76,11 +83,17 @@ class TuyaManager:
                 ]
             }
             result = self.cloud.sendcommand(device_id, commands)
+            
+            # Check for API Quota Exceeded Error (Code 28841004)
+            if result and not result.get('success', True) and result.get('code') == 28841004:
+                logger.error(f"🚨 TUYA API QUOTA EXCEEDED! Command to {device_id} blocked by Tuya Cloud.")
+                return {'success': False, 'quota_exceeded': True, 'raw': result}
+                
             logger.info(f"Command result for {device_id} (State: {switch_state}): {result}")
             return result
         except Exception as e:
             logger.error(f"Error sending command to {device_id}: {e}")
-            return None
+            return {'success': False, 'error': str(e)}
 
 if __name__ == "__main__":
     print("Initializing Tuya Manager...")
