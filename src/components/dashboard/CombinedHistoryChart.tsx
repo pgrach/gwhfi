@@ -16,7 +16,7 @@ import {
     ReferenceArea,
     ReferenceLine
 } from "recharts"
-import { getUKDateBoundaries } from "@/lib/date-utils"
+import { getUKDateBoundaries, getUKDateBoundariesForDate } from "@/lib/date-utils"
 
 interface Rate {
     value_inc_vat: number
@@ -33,7 +33,13 @@ interface ScheduleSlot {
 
 export function CombinedHistoryChart() {
     const [data, setData] = useState<any[]>([])
-    const [viewMode, setViewMode] = useState<"today" | "tomorrow" | "7d" | "30d">("today")
+    const [viewMode, setViewMode] = useState<"today" | "tomorrow" | "7d" | "30d" | "custom">("today")
+    const [customDate, setCustomDate] = useState<string>(() => {
+        // Default to yesterday in local time
+        const d = new Date()
+        d.setDate(d.getDate() - 1)
+        return d.toISOString().split('T')[0]
+    })
     const [hasRates, setHasRates] = useState(true)
     const [totals, setTotals] = useState({ peak: 0, offPeak: 0 })
     const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
@@ -62,6 +68,10 @@ export function CombinedHistoryChart() {
             } else if (viewMode === "7d") {
                 const { start } = getUKDateBoundaries(-7)
                 const { end } = getUKDateBoundaries(0)
+                startDate = start
+                endDate = end
+            } else if (viewMode === "custom") {
+                const { start, end } = getUKDateBoundariesForDate(customDate)
                 startDate = start
                 endDate = end
             } else {
@@ -94,7 +104,7 @@ export function CombinedHistoryChart() {
             // 7d = 1 hour (Aggregated)
             // 30d = 1 hour (Aggregated) or maybe 4 hours? Let's try 1h first.
             // ALWAYS use RPC downsampling to avoid Supabase's 1000-row limit
-            const bucketMinutes = (viewMode === "today" || viewMode === "tomorrow") ? 1 : 60
+            const bucketMinutes = (viewMode === "today" || viewMode === "tomorrow" || viewMode === "custom") ? 1 : 60
 
             const readingsPromise = supabase
                 .rpc('get_downsampled_readings', {
@@ -245,11 +255,12 @@ export function CombinedHistoryChart() {
 
             rates.sort((a, b) => new Date(a.valid_from).getTime() - new Date(b.valid_from).getTime())
 
+            const isDayView = viewMode === "today" || viewMode === "tomorrow" || viewMode === "custom"
             while (currentCursor <= endDate) {
                 const timestamp = currentCursor.toLocaleString([], {
                     timeZone: 'Europe/London',
-                    month: (viewMode === "today" || viewMode === "tomorrow") ? undefined : 'numeric',
-                    day: (viewMode === "today" || viewMode === "tomorrow") ? undefined : 'numeric',
+                    month: isDayView ? undefined : 'numeric',
+                    day: isDayView ? undefined : 'numeric',
                     hour: '2-digit',
                     minute: '2-digit'
                 })
@@ -303,7 +314,7 @@ export function CombinedHistoryChart() {
         }
 
         fetchData()
-    }, [viewMode])
+    }, [viewMode, customDate])
 
     // Identify "off" periods for shading (both heaters at 0W or null)
     const offPeriods: Array<{ start: string; end: string }> = []
@@ -403,7 +414,7 @@ export function CombinedHistoryChart() {
 
         // Only show if the closest point is reasonably close to now
         // (within the view period)
-        const maxDiff = viewMode === "today" || viewMode === "tomorrow" ? 60000 : 3600000
+        const maxDiff = (viewMode === "today" || viewMode === "tomorrow" || viewMode === "custom") ? 60000 : 3600000
         if (minDiff < maxDiff) {
             currentTimestamp = closestPoint
         }
@@ -436,11 +447,28 @@ export function CombinedHistoryChart() {
                         </div>
                     </CardDescription>
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap gap-2 items-center">
                     <Button variant={viewMode === "today" ? "default" : "outline"} size="sm" onClick={() => setViewMode("today")}>Today</Button>
                     <Button variant={viewMode === "tomorrow" ? "default" : "outline"} size="sm" onClick={() => setViewMode("tomorrow")}>Tomorrow</Button>
                     <Button variant={viewMode === "7d" ? "default" : "outline"} size="sm" onClick={() => setViewMode("7d")}>7d</Button>
                     <Button variant={viewMode === "30d" ? "default" : "outline"} size="sm" onClick={() => setViewMode("30d")}>30d</Button>
+                    <input
+                        type="date"
+                        max={new Date(new Date().setDate(new Date().getDate() - 1)).toISOString().split('T')[0]}
+                        value={customDate}
+                        onChange={(e) => {
+                            if (e.target.value) {
+                                setCustomDate(e.target.value)
+                                setViewMode("custom")
+                            }
+                        }}
+                        className={`h-9 rounded-md border px-2 text-sm cursor-pointer
+                            ${viewMode === "custom"
+                                ? "bg-primary text-primary-foreground border-primary"
+                                : "bg-background border-input text-foreground hover:bg-accent hover:text-accent-foreground"
+                            }`
+                        }
+                    />
                 </div>
             </CardHeader>
             <CardContent className="pl-2">
@@ -463,7 +491,7 @@ export function CombinedHistoryChart() {
                             ))}
 
                             {/* Current time indicator - only show for today and 7d/30d views */}
-                            {currentTimestamp && (viewMode === "today" || viewMode === "7d" || viewMode === "30d") && (
+                            {currentTimestamp && viewMode === "today" && (
                                 <ReferenceLine
                                     x={currentTimestamp.timestamp}
                                     yAxisId="left"
@@ -486,7 +514,7 @@ export function CombinedHistoryChart() {
                                 fontSize={12}
                                 tickLine={false}
                                 axisLine={false}
-                                minTickGap={(viewMode === "today" || viewMode === "tomorrow") ? 30 : 60}
+                                minTickGap={(viewMode === "today" || viewMode === "tomorrow" || viewMode === "custom") ? 30 : 60}
                             />
                             {/* Left Axis: Price */}
                             <YAxis

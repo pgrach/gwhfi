@@ -107,6 +107,7 @@ export function CTASection() {
                 }
                 className="rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/70 focus:border-primary focus:outline-none"
                 placeholder="Your name"
+                suppressHydrationWarning
               />
             </div>
 
@@ -124,6 +125,7 @@ export function CTASection() {
                 }
                 className="rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/70 focus:border-primary focus:outline-none"
                 placeholder="name@company.com"
+                suppressHydrationWarning
               />
             </div>
 
@@ -140,6 +142,7 @@ export function CTASection() {
                 }
                 className="rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/70 focus:border-primary focus:outline-none"
                 placeholder="Company or site name"
+                suppressHydrationWarning
               />
             </div>
 
@@ -155,6 +158,7 @@ export function CTASection() {
                   setForm((current) => ({ ...current, siteType: event.target.value }))
                 }
                 className="rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground focus:border-primary focus:outline-none"
+                suppressHydrationWarning
               >
                 <option value="">Select site type</option>
                 <option value="generator">Renewable generator</option>
@@ -185,6 +189,7 @@ export function CTASection() {
                 type="submit"
                 disabled={status === "loading"}
                 className="inline-flex items-center justify-center rounded-md bg-primary px-7 py-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-70"
+                suppressHydrationWarning
               >
                 {status === "loading" ? "Submitting..." : "Book Pilot Call"}
               </button>
