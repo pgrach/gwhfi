@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { supabase } from "@/lib/supabase"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -16,7 +17,7 @@ import {
     ReferenceArea,
     ReferenceLine
 } from "recharts"
-import { getUKDateBoundaries, getUKDateBoundariesForDate } from "@/lib/date-utils"
+import { getUKDateBoundaries, getUKDateBoundariesForDate, getUKDateString } from "@/lib/date-utils"
 
 interface Rate {
     value_inc_vat: number
@@ -32,13 +33,21 @@ interface ScheduleSlot {
 }
 
 export function CombinedHistoryChart() {
+    const router = useRouter()
+    const pathname = usePathname()
+    const searchParams = useSearchParams()
+    const selectedDateParam = searchParams.get("selectedDate")
+    const hasValidSelectedDateParam = !!selectedDateParam && /^\d{4}-\d{2}-\d{2}$/.test(selectedDateParam)
+
     const [data, setData] = useState<any[]>([])
-    const [viewMode, setViewMode] = useState<"today" | "tomorrow" | "7d" | "30d" | "custom">("today")
+    const [viewMode, setViewMode] = useState<"today" | "tomorrow" | "7d" | "30d" | "custom">(
+        hasValidSelectedDateParam ? "custom" : "today"
+    )
     const [customDate, setCustomDate] = useState<string>(() => {
-        // Default to yesterday in local time
-        const d = new Date()
-        d.setDate(d.getDate() - 1)
-        return d.toISOString().split('T')[0]
+        if (hasValidSelectedDateParam && selectedDateParam) {
+            return selectedDateParam
+        }
+        return getUKDateString(-1)
     })
     const [hasRates, setHasRates] = useState(true)
     const [totals, setTotals] = useState({ peak: 0, offPeak: 0 })
@@ -49,6 +58,20 @@ export function CombinedHistoryChart() {
     const PRODUCT = "AGILE-24-10-01"
     const REGION = "C" // London
     const TARIFF = `E-1R-${PRODUCT}-${REGION}`
+
+    const isValidDateInputValue = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value)
+
+    const updateSelectedDateQuery = (value: string | null) => {
+        const params = new URLSearchParams(searchParams.toString())
+        if (value) {
+            params.set("selectedDate", value)
+        } else {
+            params.delete("selectedDate")
+        }
+
+        const query = params.toString()
+        router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false })
+    }
 
     useEffect(() => {
         const fetchData = async () => {
@@ -71,9 +94,17 @@ export function CombinedHistoryChart() {
                 startDate = start
                 endDate = end
             } else if (viewMode === "custom") {
-                const { start, end } = getUKDateBoundariesForDate(customDate)
-                startDate = start
-                endDate = end
+                try {
+                    const { start, end } = getUKDateBoundariesForDate(customDate)
+                    startDate = start
+                    endDate = end
+                } catch {
+                    const fallbackDate = getUKDateString(-1)
+                    setCustomDate(fallbackDate)
+                    const { start, end } = getUKDateBoundariesForDate(fallbackDate)
+                    startDate = start
+                    endDate = end
+                }
             } else {
                 // 30d
                 const { start } = getUKDateBoundaries(-30)
@@ -448,18 +479,31 @@ export function CombinedHistoryChart() {
                     </CardDescription>
                 </div>
                 <div className="flex flex-wrap gap-2 items-center">
-                    <Button variant={viewMode === "today" ? "default" : "outline"} size="sm" onClick={() => setViewMode("today")}>Today</Button>
-                    <Button variant={viewMode === "tomorrow" ? "default" : "outline"} size="sm" onClick={() => setViewMode("tomorrow")}>Tomorrow</Button>
-                    <Button variant={viewMode === "7d" ? "default" : "outline"} size="sm" onClick={() => setViewMode("7d")}>7d</Button>
-                    <Button variant={viewMode === "30d" ? "default" : "outline"} size="sm" onClick={() => setViewMode("30d")}>30d</Button>
+                    <Button variant={viewMode === "today" ? "default" : "outline"} size="sm" onClick={() => {
+                        updateSelectedDateQuery(null)
+                        setViewMode("today")
+                    }}>Today</Button>
+                    <Button variant={viewMode === "tomorrow" ? "default" : "outline"} size="sm" onClick={() => {
+                        updateSelectedDateQuery(null)
+                        setViewMode("tomorrow")
+                    }}>Tomorrow</Button>
+                    <Button variant={viewMode === "7d" ? "default" : "outline"} size="sm" onClick={() => {
+                        updateSelectedDateQuery(null)
+                        setViewMode("7d")
+                    }}>7d</Button>
+                    <Button variant={viewMode === "30d" ? "default" : "outline"} size="sm" onClick={() => {
+                        updateSelectedDateQuery(null)
+                        setViewMode("30d")
+                    }}>30d</Button>
                     <input
                         type="date"
-                        max={new Date(new Date().setDate(new Date().getDate() - 1)).toISOString().split('T')[0]}
+                        max={getUKDateString(-1)}
                         value={customDate}
                         onChange={(e) => {
-                            if (e.target.value) {
+                            if (isValidDateInputValue(e.target.value)) {
                                 setCustomDate(e.target.value)
                                 setViewMode("custom")
+                                updateSelectedDateQuery(e.target.value)
                             }
                         }}
                         className={`h-9 rounded-md border px-2 text-sm cursor-pointer

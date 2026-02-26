@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { useSearchParams } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 
 interface PaidPriceWindow {
@@ -13,6 +14,18 @@ interface EnergyStatsResponse {
     yesterday: PaidPriceWindow
     last7d: PaidPriceWindow
     last30d: PaidPriceWindow
+    selected_day: {
+        date: string
+        window: PaidPriceWindow
+    } | null
+}
+
+function formatDateLabel(dateStr: string): string {
+    const [year, month, day] = dateStr.split("-")
+    if (!year || !month || !day) {
+        return dateStr
+    }
+    return `${day}/${month}/${year}`
 }
 
 function formatWindowValue(window: PaidPriceWindow | null | undefined): string {
@@ -32,13 +45,16 @@ function formatWindowValue(window: PaidPriceWindow | null | undefined): string {
 }
 
 export function PaidPriceInsights() {
+    const searchParams = useSearchParams()
+    const selectedDate = searchParams.get("selectedDate")
     const [stats, setStats] = useState<EnergyStatsResponse | null>(null)
     const [loading, setLoading] = useState(true)
 
     useEffect(() => {
         const fetchStats = async () => {
             try {
-                const response = await fetch("/api/energy-stats", { cache: "no-store" })
+                const query = selectedDate ? `?selectedDate=${encodeURIComponent(selectedDate)}` : ""
+                const response = await fetch(`/api/energy-stats${query}`, { cache: "no-store" })
                 if (response.ok) {
                     const data: EnergyStatsResponse = await response.json()
                     setStats(data)
@@ -53,7 +69,7 @@ export function PaidPriceInsights() {
         fetchStats()
         const interval = setInterval(fetchStats, 5 * 60 * 1000)
         return () => clearInterval(interval)
-    }, [])
+    }, [selectedDate])
 
     return (
         <Card>
@@ -64,7 +80,15 @@ export function PaidPriceInsights() {
                 </CardDescription>
             </CardHeader>
             <CardContent>
-                <div className="grid gap-3 sm:grid-cols-3">
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    {stats?.selected_day && (
+                        <div className="rounded-lg border bg-card p-4">
+                            <p className="text-sm text-muted-foreground">Selected ({formatDateLabel(stats.selected_day.date)})</p>
+                            <p className="text-2xl font-semibold mt-1">
+                                {loading ? "…" : formatWindowValue(stats.selected_day.window)}
+                            </p>
+                        </div>
+                    )}
                     <div className="rounded-lg border bg-card p-4">
                         <p className="text-sm text-muted-foreground">Yesterday</p>
                         <p className="text-2xl font-semibold mt-1">

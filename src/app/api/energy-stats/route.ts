@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { createClient, type SupabaseClient } from "@supabase/supabase-js"
-import { getUKDateBoundaries } from "@/lib/date-utils"
+import { getUKDateBoundaries, getUKDateBoundariesForDate, getUKDateString } from "@/lib/date-utils"
 
 const PRODUCT = "AGILE-24-10-01"
 const REGION = "C"
@@ -31,6 +31,11 @@ interface WindowResult {
     total_kwh_measured: number
     total_cost_gbp: number
     coverage_ratio: number
+}
+
+interface SelectedDayResult {
+    date: string
+    window: WindowResult
 }
 
 interface OctopusResponse {
@@ -200,8 +205,14 @@ function computeWindowResult(
     }
 }
 
-export async function GET() {
+export async function GET(request: Request) {
     try {
+        const yesterdayDate = getUKDateString(-1)
+        const selectedDateRaw = new URL(request.url).searchParams.get("selectedDate")
+        const selectedDate = selectedDateRaw && /^\d{4}-\d{2}-\d{2}$/.test(selectedDateRaw)
+            ? selectedDateRaw
+            : null
+
         const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
         const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
@@ -215,7 +226,13 @@ export async function GET() {
         const sevenDayStart = getUKDateBoundaries(-7).start
         const thirtyDayStart = getUKDateBoundaries(-30).start
 
-        const globalStart = thirtyDayStart
+        const selectedDateBounds = selectedDate && selectedDate <= yesterdayDate
+            ? getUKDateBoundariesForDate(selectedDate)
+            : null
+
+        const globalStart = selectedDateBounds && selectedDateBounds.start < thirtyDayStart
+            ? selectedDateBounds.start
+            : thirtyDayStart
         const globalEnd = yesterdayBounds.end
 
         const [rates, channel0Readings, channel1Readings] = await Promise.all([
@@ -245,6 +262,18 @@ export async function GET() {
             yesterdayBounds.end.getTime()
         )
 
+        const selected_day: SelectedDayResult | null = selectedDateBounds && selectedDate
+            ? {
+                date: selectedDate,
+                window: computeWindowResult(
+                    rates,
+                    readingsByChannel,
+                    selectedDateBounds.start.getTime(),
+                    selectedDateBounds.end.getTime()
+                ),
+            }
+            : null
+
         return NextResponse.json({
             scope: "all_heaters_combined",
             method: "kwh_weighted_avg_price_paid",
@@ -252,6 +281,7 @@ export async function GET() {
             yesterday,
             last7d,
             last30d,
+            selected_day,
             generated_at: new Date().toISOString(),
         })
     } catch {
