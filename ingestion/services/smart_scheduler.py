@@ -84,44 +84,84 @@ class SmartScheduler:
 
         # Calculate how many slots we need
         total_slots_needed = int(budget_hours * 2)
-        afternoon_slots_needed = 2 # 1 Hour
-        evening_slots_needed = 2 # 1 Hour for Evening Boost
+        morning_slots_needed = 4  # 2 Hours for Morning Ready
+        afternoon_slots_needed = 2  # 1 Hour
+        evening_slots_needed = 2  # 1 Hour for Evening Boost
 
-        # --- STEP 1: Secure Afternoon Boost (14:00 - 16:00) ---
+        # --- STEP 1: Morning Ready (00:00 - 06:00) ---
+        # Select cheapest overnight slots, with tiebreaker preferring
+        # slots CLOSER to morning (later hour wins) so the tank stays
+        # hot until wake-up.
+        morning_candidates = []
+        for slot in eligible:
+            h = slot['valid_from'].hour
+            if 0 <= h < 6:
+                morning_candidates.append(slot)
+
+        # Sort by price first, then by hour DESCENDING (later = closer to morning)
+        # so that among equally-priced slots, later ones are preferred.
+        morning_candidates.sort(key=lambda s: (s['value_inc_vat'], -s['valid_from'].hour))
+        selected_morning = morning_candidates[:morning_slots_needed]
+
+        if not selected_morning and morning_candidates:
+            logger.warning("No eligible morning slots found within price limits.")
+        elif not morning_candidates:
+            logger.info("No morning rate data available (00:00-06:00).")
+
+        # If not enough cheap morning slots were found, fill with the
+        # LATEST available morning slots regardless of strict threshold
+        # (still respecting hard limit) so the tank is heated before wake-up.
+        if len(selected_morning) < morning_slots_needed:
+            shortfall = morning_slots_needed - len(selected_morning)
+            selected_morning_ids = {f"{s['valid_from']}" for s in selected_morning}
+            # Fallback: pick latest available morning slots under hard limit
+            fallback_morning = [
+                s for s in eligible
+                if 0 <= s['valid_from'].hour < 6
+                and f"{s['valid_from']}" not in selected_morning_ids
+            ]
+            # Prefer latest slots (closest to wakeup)
+            fallback_morning.sort(key=lambda s: -s['valid_from'].hour)
+            selected_morning.extend(fallback_morning[:shortfall])
+            if fallback_morning[:shortfall]:
+                logger.info(f"Morning fallback: added {len(fallback_morning[:shortfall])} later slots to ensure hot water.")
+
+        # --- STEP 2: Secure Afternoon Boost (14:00 - 16:00) ---
+        selected_morning_ids = {f"{s['valid_from']}" for s in selected_morning}
         afternoon_candidates = []
         for slot in eligible:
             h = slot['valid_from'].hour
-            if 14 <= h < 16:
+            if 14 <= h < 16 and f"{slot['valid_from']}" not in selected_morning_ids:
                 afternoon_candidates.append(slot)
-        
+
         afternoon_candidates.sort(key=lambda s: s['value_inc_vat'])
         selected_afternoon = afternoon_candidates[:afternoon_slots_needed]
 
-        # --- STEP 2: Secure Evening Boost (19:00 - 23:30) ---
+        # --- STEP 3: Secure Evening Boost (19:00 - 23:30) ---
+        already_selected_ids = {f"{s['valid_from']}" for s in selected_morning + selected_afternoon}
         evening_candidates = []
         for slot in eligible:
             h = slot['valid_from'].hour
             m = slot['valid_from'].minute
-            if 19 <= h < 23 or (h == 23 and m < 30):
-                if slot not in selected_afternoon:
-                    evening_candidates.append(slot)
-        
+            if (19 <= h < 23 or (h == 23 and m < 30)) and f"{slot['valid_from']}" not in already_selected_ids:
+                evening_candidates.append(slot)
+
         evening_candidates.sort(key=lambda s: s['value_inc_vat'])
         selected_evening = evening_candidates[:evening_slots_needed]
 
-        # --- STEP 3: Fill Logic (Night/Rest of Day) ---
-        remaining_slots_count = total_slots_needed - len(selected_afternoon) - len(selected_evening)
+        # --- STEP 4: Fill Logic (Rest of Day) ---
+        remaining_slots_count = total_slots_needed - len(selected_morning) - len(selected_afternoon) - len(selected_evening)
         if remaining_slots_count < 0:
             remaining_slots_count = 0
-        
-        selected_ids = {f"{s['valid_from']}" for s in selected_afternoon + selected_evening}
-        
+
+        all_selected_ids = {f"{s['valid_from']}" for s in selected_morning + selected_afternoon + selected_evening}
+
         remaining_candidates = [
-            s for s in eligible 
-            if f"{s['valid_from']}" not in selected_ids 
+            s for s in eligible
+            if f"{s['valid_from']}" not in all_selected_ids
             and s['value_inc_vat'] <= strict_threshold
         ]
-        
+
         def effective_price(slot):
             price = slot['value_inc_vat']
             hour_index = slot['valid_from'].hour
@@ -129,9 +169,9 @@ class SmartScheduler:
 
         remaining_candidates.sort(key=effective_price)
         selected_rest = remaining_candidates[:remaining_slots_count]
-        
+
         # Combine
-        final_selection = selected_afternoon + selected_evening + selected_rest
+        final_selection = selected_morning + selected_afternoon + selected_evening + selected_rest
         final_selection.sort(key=lambda s: s['valid_from'])
         
         self._log_schedule_summary(target_date, final_selection, rejected_expensive, rejected_blocked, strict_threshold, daily_avg)

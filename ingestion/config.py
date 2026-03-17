@@ -30,7 +30,7 @@ class Config:
 
     # Smart Heating Configuration
     try:
-        DAILY_HEATING_BUDGET_HOURS = float(os.getenv('DAILY_HEATING_BUDGET_HOURS', 3.0))
+        DAILY_HEATING_BUDGET_HOURS = float(os.getenv('DAILY_HEATING_BUDGET_HOURS', 5.0))
     except ValueError:
         DAILY_HEATING_BUDGET_HOURS = 3.0
 
