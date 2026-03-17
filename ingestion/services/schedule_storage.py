@@ -23,7 +23,7 @@ CREATE INDEX idx_schedule_heater_type ON heating_schedule(heater_type);
 import os
 import logging
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -67,11 +67,22 @@ class ScheduleStorage:
             return True
 
         try:
-            # First, delete existing future schedule for this heater type
-            # Use strftime to ensure proper ISO format with 'T' separator
-            now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+            # Determine the date range covered by the slots being saved
+            # Delete ALL existing rows for this heater type in that range,
+            # not just future ones, to avoid duplicate key conflicts
+            slot_starts = []
+            for slot in slots:
+                s = slot['valid_from']
+                if hasattr(s, 'isoformat'):
+                    slot_starts.append(s)
+                else:
+                    slot_starts.append(datetime.fromisoformat(s))
+
+            range_start = min(slot_starts).strftime('%Y-%m-%dT%H:%M:%SZ')
+            range_end = (max(slot_starts) + timedelta(hours=1)).strftime('%Y-%m-%dT%H:%M:%SZ')
+
             delete_url = f"{self.supabase_url}/rest/v1/heating_schedule"
-            delete_params = f"heater_type=eq.{heater_type}&slot_start=gte.{now}"
+            delete_params = f"heater_type=eq.{heater_type}&slot_start=gte.{range_start}&slot_start=lt.{range_end}"
 
             delete_response = requests.delete(
                 f"{delete_url}?{delete_params}",
@@ -83,6 +94,7 @@ class ScheduleStorage:
 
             # Insert new schedule
             rows = []
+            computed_at = datetime.now(timezone.utc).isoformat()
             for slot in slots:
                 # Handle both datetime objects and ISO strings
                 slot_start = slot['valid_from']
@@ -98,23 +110,21 @@ class ScheduleStorage:
                     "slot_end": slot_end,
                     "price": slot['value_inc_vat'],
                     "heater_type": heater_type,
-                    "computed_at": datetime.now(timezone.utc).isoformat()
+                    "computed_at": computed_at
                 })
 
             insert_url = f"{self.supabase_url}/rest/v1/heating_schedule"
             response = requests.post(
                 insert_url,
                 json=rows,
-                headers={**self.headers, "Prefer": "resolution=merge-duplicates"}
+                headers=self.headers
             )
 
             if response.status_code in [200, 201]:
                 logger.info(f"Saved {len(rows)} schedule slots for {heater_type} to Supabase")
-                print("SAVE SUCCESS", flush=True)
                 return True
             else:
                 logger.error(f"Failed to save schedule: {response.status_code} - {response.text}")
-                print(f"SAVE ERROR: {response.status_code} - {response.text}", flush=True)
                 return False
 
         except Exception as e:
