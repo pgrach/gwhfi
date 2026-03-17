@@ -27,7 +27,9 @@ export default function DashboardPage() {
                 <ThemeToggle />
             </div>
             <div className="space-y-5">
-                <PaidPriceInsights />
+                <Suspense fallback={<div className="text-muted-foreground">Loading insights...</div>}>
+                    <PaidPriceInsights />
+                </Suspense>
 
                 <div className="space-y-4">
                     <h3 className="text-lg font-semibold">Live Operations</h3>
