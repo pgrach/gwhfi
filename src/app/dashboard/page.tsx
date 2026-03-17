@@ -1,3 +1,4 @@
+import { Suspense } from "react"
 import { LiveStatus } from "@/components/dashboard/LiveStatus"
 import { CombinedHistoryChart } from "@/components/dashboard/CombinedHistoryChart"
 import { CurrentRate } from "@/components/dashboard/CurrentRate"
@@ -36,7 +37,9 @@ export default function DashboardPage() {
 
                 <div className="space-y-3">
                     <h3 className="text-lg font-semibold">Usage & Price Trend</h3>
-                    <CombinedHistoryChart />
+                    <Suspense fallback={<div className="h-[400px] flex items-center justify-center text-muted-foreground">Loading chart...</div>}>
+                        <CombinedHistoryChart />
+                    </Suspense>
                 </div>
             </div>
         </div>
