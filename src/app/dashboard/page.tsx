@@ -6,6 +6,8 @@ import { PaidPriceInsights } from "@/components/dashboard/PaidPriceInsights"
 import { ThemeToggle } from "@/components/ui/theme-toggle"
 import { Zap, Droplet } from "lucide-react"
 
+export const dynamic = 'force-dynamic'
+
 export default function DashboardPage() {
     return (
         <div className="flex-1 space-y-4 p-4 md:p-8 pt-6">
