@@ -137,13 +137,39 @@ export function CombinedHistoryChart() {
             // ALWAYS use RPC downsampling to avoid Supabase's 1000-row limit
             const bucketMinutes = (viewMode === "today" || viewMode === "tomorrow" || viewMode === "custom") ? 1 : 60
 
-            const readingsPromise = supabase
-                .rpc('get_downsampled_readings', {
-                    start_time: startIso,
-                    end_time: endIso,
-                    bucket_seconds: bucketMinutes * 60
-                })
-                .limit(2000)
+            // Supabase PostgREST enforces a 1000-row server-side limit.
+            // For 30d view (~1440 rows), split into two parallel 15-day chunks.
+            const readingsPromise: Promise<any[]> = (async () => {
+                if (viewMode === "30d") {
+                    const midTime = new Date((startDate.getTime() + endDate.getTime()) / 2)
+                    const midIso = midTime.toISOString()
+                    const [firstHalf, secondHalf] = await Promise.all([
+                        supabase.rpc('get_downsampled_readings', {
+                            start_time: startIso,
+                            end_time: midIso,
+                            bucket_seconds: bucketMinutes * 60
+                        }),
+                        supabase.rpc('get_downsampled_readings', {
+                            start_time: midIso,
+                            end_time: endIso,
+                            bucket_seconds: bucketMinutes * 60
+                        })
+                    ])
+                    const data1 = firstHalf.data || []
+                    const data2 = secondHalf.data || []
+                    if (firstHalf.error) console.error("Supabase Error (chunk 1):", firstHalf.error)
+                    if (secondHalf.error) console.error("Supabase Error (chunk 2):", secondHalf.error)
+                    return [...data1, ...data2]
+                } else {
+                    const res = await supabase.rpc('get_downsampled_readings', {
+                        start_time: startIso,
+                        end_time: endIso,
+                        bucket_seconds: bucketMinutes * 60
+                    })
+                    if (res.error) console.error("Supabase Error:", res.error)
+                    return res.data || []
+                }
+            })()
 
             // Fetch scheduled heating slots from Supabase
             const schedulePromise = supabase
@@ -183,7 +209,7 @@ export function CombinedHistoryChart() {
             }))
 
             try {
-                const [rData, sData, schedData, movementData] = await Promise.all([ratesPromise, readingsPromise, schedulePromise, channelMovementPromise])
+                const [rData, readingsData, schedData, movementData] = await Promise.all([ratesPromise, readingsPromise, schedulePromise, channelMovementPromise])
                 if (rData.results) {
                     rates = rData.results
                     if (rates.length === 0 && viewMode === "tomorrow") {
@@ -193,11 +219,7 @@ export function CombinedHistoryChart() {
                     }
                 }
 
-                if (sData.data) {
-                    readings = sData.data
-                } else if (sData.error) {
-                    console.error("Supabase Error:", sData.error)
-                }
+                readings = readingsData
 
                 if (schedData.data) {
                     scheduleSlots = schedData.data
