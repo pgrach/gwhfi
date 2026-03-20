@@ -127,7 +127,7 @@ export function CombinedHistoryChart() {
 
             // Explicitly ensure we fetch enough future data if viewing tomorrow
             const ratesPromise = fetch(
-                `https://api.octopus.energy/v1/products/${PRODUCT}/electricity-tariffs/${TARIFF}/standard-unit-rates/?period_from=${startIso}&page_size=1500`
+                `https://api.octopus.energy/v1/products/${PRODUCT}/electricity-tariffs/${TARIFF}/standard-unit-rates/?period_from=${startIso}&period_to=${endIso}&page_size=2000`
             ).then(r => r.json())
 
             // Define bucket size based on view mode
@@ -143,6 +143,7 @@ export function CombinedHistoryChart() {
                     end_time: endIso,
                     bucket_seconds: bucketMinutes * 60
                 })
+                .limit(2000)
 
             // Fetch scheduled heating slots from Supabase
             const schedulePromise = supabase
