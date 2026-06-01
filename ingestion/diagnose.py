@@ -70,6 +70,11 @@ def format_tuya_failure(status):
 def check_tuya():
     manager = TuyaManager()
     print_result("Tuya control mode", True, Config.TUYA_CONTROL_MODE)
+    print_result(
+        "Heater routing",
+        True,
+        f"storage_enabled={Config.STORAGE_HEATER_ENABLED}, off_peak_target={Config.OFF_PEAK_HEATER_TARGET}"
+    )
     devices = [
         ("Main heater", Config.TUYA_DEVICE_ID_MAIN),
         ("Second heater", Config.TUYA_DEVICE_ID_SECOND),

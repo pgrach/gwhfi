@@ -16,6 +16,14 @@ class Config:
     TUYA_DEVICE_IP_SECOND = os.getenv('TUYA_DEVICE_IP_SECOND', 'Auto')
     TUYA_LOCAL_KEY_MAIN = os.getenv('TUYA_LOCAL_KEY_MAIN')
     TUYA_LOCAL_KEY_SECOND = os.getenv('TUYA_LOCAL_KEY_SECOND')
+    STORAGE_HEATER_ENABLED = os.getenv('STORAGE_HEATER_ENABLED', 'false').lower() == 'true'
+    OFF_PEAK_HEATER_TARGET = os.getenv(
+        'OFF_PEAK_HEATER_TARGET',
+        'second' if STORAGE_HEATER_ENABLED else 'main'
+    ).lower()
+
+    if OFF_PEAK_HEATER_TARGET not in {'main', 'second'}:
+        OFF_PEAK_HEATER_TARGET = 'main'
 
     try:
         TUYA_PROTOCOL_VERSION_MAIN = float(os.getenv('TUYA_PROTOCOL_VERSION_MAIN', 3.3))

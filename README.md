@@ -57,6 +57,7 @@ This project consists of three main components:
 Ensure your `.env` (or Railway variables) includes:
 *   `BLOCKED_HOURS=[7, 8, 16, 17, 18]`
 *   Tuya Credentials (`TUYA_ACCESS_ID`, `TUYA_ACCESS_KEY`, etc.)
+*   `STORAGE_HEATER_ENABLED=false` and `OFF_PEAK_HEATER_TARGET=main` for the normal one-heater setup where Heater 2 / Storage is physically switched off.
 *   `TUYA_CONTROL_MODE=cloud` by default. Use `local` to avoid Tuya Cloud commands, or `local_then_cloud` to try LAN control first.
 *   For local Tuya control, set `TUYA_LOCAL_KEY_MAIN`, `TUYA_LOCAL_KEY_SECOND`, and optionally `TUYA_DEVICE_IP_MAIN`, `TUYA_DEVICE_IP_SECOND`, `TUYA_PROTOCOL_VERSION_MAIN`, `TUYA_PROTOCOL_VERSION_SECOND`, `TUYA_LOCAL_DPS_MAIN`, `TUYA_LOCAL_DPS_SECOND`.
 *   Local Tuya control only works when this Python controller runs on the same LAN as the heater switches, unless the LAN is reachable over a VPN/tunnel.
@@ -86,3 +87,5 @@ To test switching without waiting for a scheduled slot:
 python ingestion/set_heater.py storage on
 python ingestion/set_heater.py storage off
 ```
+
+See `docs/HEATER_SETUP.md` for the current physical heater setup and routing assumptions.
