@@ -71,20 +71,33 @@ def check_tuya():
     manager = TuyaManager()
     print_result("Tuya control mode", True, Config.TUYA_CONTROL_MODE)
     print_result(
+        "Heater control",
+        True,
+        f"main={Config.MAIN_HEATER_CONTROL}, second={Config.SECOND_HEATER_CONTROL}"
+    )
+    print_result(
         "Heater routing",
         True,
         f"storage_enabled={Config.STORAGE_HEATER_ENABLED}, off_peak_target={Config.OFF_PEAK_HEATER_TARGET}"
     )
     devices = [
-        ("Main heater", Config.TUYA_DEVICE_ID_MAIN),
-        ("Second heater", Config.TUYA_DEVICE_ID_SECOND),
+        ("Main heater", Config.TUYA_DEVICE_ID_MAIN, Config.MAIN_HEATER_CONTROL == 'tuya'),
+        (
+            "Second heater",
+            Config.TUYA_DEVICE_ID_SECOND,
+            Config.SECOND_HEATER_CONTROL == 'tuya'
+            and (Config.STORAGE_HEATER_ENABLED or Config.OFF_PEAK_HEATER_TARGET == 'second'),
+        ),
     ]
 
     all_ok = True
-    for name, device_id in devices:
+    for name, device_id, required in devices:
         if not device_id:
-            print_result(name, False, "device id is not configured")
-            all_ok = False
+            if required:
+                print_result(name, False, "device id is not configured")
+                all_ok = False
+            else:
+                print_result(name, True, "device id is not configured, not used by current routing")
             continue
 
         if manager.has_local_config(device_id):
@@ -106,10 +119,20 @@ def check_tuya():
             state = "ON" if status.get('is_on') else "OFF"
             online = "online" if status.get('online') else "offline"
             source = status.get('source', 'cloud')
-            print_result(name, True, f"{online}, switch {state}, source {source}")
+            suffix = ""
+            if not required:
+                suffix = ", not used by current routing"
+            if status.get('online'):
+                print_result(name, True, f"{online}, switch {state}, source {source}{suffix}")
+            elif required:
+                print_result(name, False, f"{online}, switch {state}, source {source}; configured target cannot be controlled")
+                all_ok = False
+            else:
+                print_result(name, True, f"{online}, switch {state}, source {source}{suffix}")
         else:
             print_result(name, False, format_tuya_failure(status))
-            all_ok = False
+            if required:
+                all_ok = False
 
     return all_ok
 
@@ -134,8 +157,30 @@ def check_shelly():
     for idx, emeter in enumerate(emeters):
         powers.append(f"ch{idx}={emeter.get('power', 0.0)}W")
 
-    print_result("Shelly", True, ", ".join(powers))
-    return True
+    relays = status.get("relays", [])
+    relay_details = []
+    for idx, relay in enumerate(relays):
+        state = "ON" if relay.get("ison") else "OFF"
+        relay_details.append(f"relay{idx}={state}")
+
+    detail = ", ".join(powers)
+    if relay_details:
+        detail = f"{detail}; {', '.join(relay_details)}"
+
+    ok = True
+    required_relays = []
+    if Config.MAIN_HEATER_CONTROL == 'shelly':
+        required_relays.append(("main", Config.SHELLY_RELAY_CHANNEL_MAIN))
+    if Config.SECOND_HEATER_CONTROL == 'shelly' and (Config.STORAGE_HEATER_ENABLED or Config.OFF_PEAK_HEATER_TARGET == 'second'):
+        required_relays.append(("second", Config.SHELLY_RELAY_CHANNEL_SECOND))
+
+    for label, channel in required_relays:
+        if channel >= len(relays):
+            ok = False
+            detail = f"{detail}; missing Shelly relay channel {channel} for {label} heater"
+
+    print_result("Shelly", ok, detail)
+    return ok
 
 
 def main():

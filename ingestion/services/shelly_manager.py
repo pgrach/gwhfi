@@ -46,9 +46,59 @@ class ShellyManager:
         status = self.get_status()
         if not status:
             return None
-            
+
         emeters = status.get("emeters", [])
         if channel < len(emeters):
             return emeters[channel].get("power", 0.0)
-        
+
         return None
+
+    def get_relay_status(self, channel=0):
+        """Returns relay state for Shelly devices that expose relay outputs."""
+        status = self.get_status()
+        if not status:
+            return {"success": False, "error": "Shelly status request failed"}
+
+        relays = status.get("relays", [])
+        if channel >= len(relays):
+            return {
+                "success": False,
+                "error": f"Shelly relay channel {channel} is not available",
+                "relay_count": len(relays),
+            }
+
+        relay = relays[channel]
+        return {
+            "success": True,
+            "online": relay.get("is_valid", True),
+            "is_on": relay.get("ison", False),
+            "raw": relay,
+        }
+
+    def set_relay(self, channel=0, turn_on=True):
+        """Switches a Shelly relay channel through Shelly Cloud."""
+        if not self.enabled:
+            return {"success": False, "error": "Shelly control disabled"}
+
+        url = f"{self.server}/device/relay/control"
+        payload = {
+            "id": self.device_id,
+            "auth_key": self.auth_key,
+            "channel": channel,
+            "turn": "on" if turn_on else "off",
+        }
+
+        try:
+            response = requests.post(url, data=payload, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+
+            if data.get("isok"):
+                logger.info(f"Shelly relay command succeeded for channel {channel} (State: {turn_on})")
+                return {"success": True, "raw": data}
+
+            logger.error(f"Shelly relay command failed for channel {channel}: {data}")
+            return {"success": False, "error": data.get("errors") or data.get("error") or data}
+        except Exception as e:
+            logger.error(f"Failed to switch Shelly relay channel {channel}: {e}")
+            return {"success": False, "error": str(e)}

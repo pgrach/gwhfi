@@ -4,6 +4,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
+def int_env(name, default):
+    try:
+        return int(os.getenv(name, default))
+    except (TypeError, ValueError):
+        return int(default)
+
+
 class Config:
     # Tuya
     TUYA_ACCESS_ID = os.getenv('TUYA_ACCESS_ID')
@@ -49,6 +57,10 @@ class Config:
     SHELLY_AUTH_KEY = os.getenv("SHELLY_CLOUD_AUTH_KEY")
     SHELLY_SERVER = os.getenv("SHELLY_CLOUD_SERVER")
     SHELLY_DEVICE_ID = os.getenv("SHELLY_DEVICE_ID")
+    SHELLY_CHANNEL_MAIN = int_env("SHELLY_CHANNEL_MAIN", 0)
+    SHELLY_CHANNEL_SECOND = int_env("SHELLY_CHANNEL_SECOND", 1)
+    SHELLY_RELAY_CHANNEL_MAIN = int_env("SHELLY_RELAY_CHANNEL_MAIN", os.getenv("SHELLY_RELAY_CHANNEL", 0))
+    SHELLY_RELAY_CHANNEL_SECOND = int_env("SHELLY_RELAY_CHANNEL_SECOND", os.getenv("SHELLY_RELAY_CHANNEL", 0))
 
     # Octopus
     OCTOPUS_PRODUCT_CODE = os.getenv('OCTOPUS_PRODUCT_CODE', 'AGILE-24-10-01')
@@ -73,6 +85,15 @@ class Config:
 
     USE_BELOW_AVERAGE = os.getenv('USE_BELOW_AVERAGE', 'true').lower() == 'true'
     SMART_COOLDOWN_ENABLED = os.getenv('SMART_COOLDOWN_ENABLED', 'false').lower() == 'true'
+
+    MAIN_HEATER_CONTROL = os.getenv('MAIN_HEATER_CONTROL', 'tuya').lower()
+    SECOND_HEATER_CONTROL = os.getenv('SECOND_HEATER_CONTROL', 'tuya').lower()
+
+    if MAIN_HEATER_CONTROL not in {'tuya', 'shelly'}:
+        MAIN_HEATER_CONTROL = 'tuya'
+
+    if SECOND_HEATER_CONTROL not in {'tuya', 'shelly'}:
+        SECOND_HEATER_CONTROL = 'tuya'
 
     # Blocked hours - times when heating should NEVER occur (e.g., morning peak)
     # Format: JSON array of hours [7, 8] blocks 07:00-09:00

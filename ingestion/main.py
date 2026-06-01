@@ -211,7 +211,7 @@ class SmartWaterController:
             if not Config.SMART_COOLDOWN_ENABLED:
                 self.low_power_count = 0
             else:
-                power = self.shelly.get_power(channel=1)
+                power = self.shelly.get_power(channel=Config.SHELLY_CHANNEL_SECOND)
 
                 if power is not None:
                     # Check for Mechanical Timer Grace Period
@@ -247,7 +247,7 @@ class SmartWaterController:
             active_main = active_peak or active_offpeak
             main_slot = slot_peak if active_peak else slot_offpeak
             main_name = "Main Heater (Peak/Off-Peak)"
-            self.apply_device_state(Config.TUYA_DEVICE_ID_MAIN, active_main, main_name, main_slot)
+            self.apply_heater_state("peak_heater", Config.TUYA_DEVICE_ID_MAIN, active_main, main_name, main_slot)
 
             if Config.STORAGE_HEATER_ENABLED:
                 logger.info("Storage heater enabled but OFF_PEAK_HEATER_TARGET=main, so storage heater is not controlled.")
@@ -257,16 +257,66 @@ class SmartWaterController:
                 self.system_state["off_peak_heater"]["last_error"] = "Storage heater physically switched off; off-peak slots routed to main heater."
         else:
             # Peak heater ignores cooldown logic because it is the free/negative-price strategy.
-            self.apply_device_state(Config.TUYA_DEVICE_ID_MAIN, active_peak, "Peak Heater", slot_peak)
-            self.apply_device_state(Config.TUYA_DEVICE_ID_SECOND, active_offpeak, "Off-Peak Heater", slot_offpeak)
+            self.apply_heater_state("peak_heater", Config.TUYA_DEVICE_ID_MAIN, active_peak, "Peak Heater", slot_peak)
+            self.apply_heater_state("off_peak_heater", Config.TUYA_DEVICE_ID_SECOND, active_offpeak, "Off-Peak Heater", slot_offpeak)
 
-    def apply_device_state(self, device_id, target_state, device_name, slot_info=None):
+    def _heater_backend(self, key):
+        return Config.MAIN_HEATER_CONTROL if key == "peak_heater" else Config.SECOND_HEATER_CONTROL
+
+    def _heater_relay_channel(self, key):
+        if key == "peak_heater":
+            return Config.SHELLY_RELAY_CHANNEL_MAIN
+        return Config.SHELLY_RELAY_CHANNEL_SECOND
+
+    def apply_heater_state(self, key, device_id, target_state, device_name, slot_info=None):
+        """Applies heater state through the configured control backend."""
+        backend = self._heater_backend(key)
+        if backend == "shelly":
+            channel = self._heater_relay_channel(key)
+            self.apply_shelly_relay_state(key, channel, target_state, device_name, slot_info)
+            return
+
+        self.apply_device_state(device_id, target_state, device_name, slot_info, key=key)
+
+    def apply_shelly_relay_state(self, key, channel, target_state, device_name, slot_info=None):
+        """Applies state to a Shelly relay channel if needed."""
+        current_state_str = self.system_state[key].get("state", "UNKNOWN")
+        is_online = self.system_state[key].get("online", False)
+        is_on = current_state_str == "ON"
+
+        if not is_online:
+            logger.warning(f"{device_name} Shelly relay status is not confirmed. Attempting control anyway...")
+
+        if is_on != target_state or current_state_str == "UNKNOWN":
+            action = "Turning ON" if target_state else "Turning OFF"
+            reason = f"Slot: {slot_info['value_inc_vat']}p until {slot_info['valid_to']}" if slot_info else "No active slot"
+            if not target_state and self.cooldown_until:
+                reason = "Smart Cooldown Active"
+
+            logger.info(f"{action} {device_name} via Shelly relay channel {channel} ({reason})")
+
+            if not self.dry_run:
+                result = self.shelly.set_relay(channel=channel, turn_on=target_state)
+                if isinstance(result, dict) and result.get("success"):
+                    self.system_state[key]["online"] = True
+                    self.system_state[key]["state"] = "ON" if target_state else "OFF"
+                    self.system_state[key]["last_error"] = None
+                else:
+                    error_msg = result.get("error") if isinstance(result, dict) else result
+                    self.system_state[key]["last_error"] = error_msg
+                    logger.error(f"Shelly relay command for {device_name} did not succeed. Response: {result}")
+                return
+
+            logger.info("[DRY RUN] Command skipped.")
+
+    def apply_device_state(self, device_id, target_state, device_name, slot_info=None, key=None):
         """Applies state to device if needed."""
         if not device_id:
             logger.warning(f"{device_name} has no Tuya device id configured; skipping control.")
             return
 
-        key = "peak_heater" if device_id == Config.TUYA_DEVICE_ID_MAIN else "off_peak_heater"
+        if key is None:
+            key = "peak_heater" if device_id == Config.TUYA_DEVICE_ID_MAIN else "off_peak_heater"
         
         # Pull from internal cache instead of polling Tuya API directly
         current_state_str = self.system_state[key].get("state", "UNKNOWN")
@@ -301,7 +351,10 @@ class SmartWaterController:
                     self.system_state[key]["state"] = "ON" if target_state else "OFF"
                     self.system_state[key]["last_error"] = None
                 else:
-                    error_msg = result.get('msg') or result.get('error') if isinstance(result, dict) else result
+                    if isinstance(result, dict):
+                        error_msg = result.get('msg') or result.get('error') or result.get('raw') or result
+                    else:
+                        error_msg = result
                     self.system_state[key]["last_error"] = error_msg
                     logger.error(
                         f"Tuya command for {device_name} did not succeed. "
@@ -327,36 +380,64 @@ class SmartWaterController:
             self.system_state["off_peak_heater"]["online"] = False
             self.system_state["off_peak_heater"]["state"] = "DISABLED"
             self.system_state["off_peak_heater"]["last_error"] = "Storage heater physically switched off; off-peak slots routed to main heater."
-        
+
         for name, dev_id, key in devices:
-            if not dev_id: continue
-            
-            status = self.tuya.get_status(dev_id)
+            self._check_heater_health(name, dev_id, key)
+
+        logger.info("--- HEALTH CHECK COMPLETE ---\n")
+
+    def _check_heater_health(self, name, dev_id, key):
+        backend = self._heater_backend(key)
+
+        if backend == "shelly":
+            channel = self._heater_relay_channel(key)
+            status = self.shelly.get_relay_status(channel=channel)
             if not (status and status.get('success', False)):
-                logger.error(f"Warning: {name}: STATUS UNKNOWN. Response: {status}")
+                logger.error(f"Warning: {name}: SHELLY RELAY STATUS UNKNOWN. Response: {status}")
                 self.system_state[key]["online"] = False
                 self.system_state[key]["state"] = "UNKNOWN"
-                if isinstance(status, dict):
-                    self.system_state[key]["last_error"] = status.get('msg') or status.get('error') or status
-                else:
-                    self.system_state[key]["last_error"] = status
-                continue
-            if status and status.get('success', False):
-                is_online = status.get('online', False)
-                state = "ON" if status.get('is_on') else "OFF"
-                
-                # Update Cache
-                self.system_state[key]["online"] = is_online
-                self.system_state[key]["state"] = state
-                self.system_state[key]["last_error"] = None
-                
-                if is_online:
-                    logger.info(f"✅ {name}: ONLINE | State: {state}")
-                else:
-                    logger.warning(f"❌ {name}: OFFLINE | (Last State: {state})")
-        
-        logger.info("--- HEALTH CHECK COMPLETE ---\n")
-        
+                self.system_state[key]["last_error"] = status.get('error') if isinstance(status, dict) else status
+                return
+
+            is_online = status.get('online', False)
+            state = "ON" if status.get('is_on') else "OFF"
+            self.system_state[key]["online"] = is_online
+            self.system_state[key]["state"] = state
+            self.system_state[key]["last_error"] = None if is_online else "Shelly relay status is invalid"
+            logger.info(f"{name}: Shelly relay channel {channel} | State: {state}")
+            return
+
+        if not dev_id:
+            logger.warning(f"{name} has no Tuya device id configured; skipping health check.")
+            self.system_state[key]["online"] = False
+            self.system_state[key]["state"] = "UNKNOWN"
+            self.system_state[key]["last_error"] = "Tuya device id is not configured"
+            return
+
+        status = self.tuya.get_status(dev_id)
+        if not (status and status.get('success', False)):
+            logger.error(f"Warning: {name}: STATUS UNKNOWN. Response: {status}")
+            self.system_state[key]["online"] = False
+            self.system_state[key]["state"] = "UNKNOWN"
+            if isinstance(status, dict):
+                self.system_state[key]["last_error"] = status.get('msg') or status.get('error') or status
+            else:
+                self.system_state[key]["last_error"] = status
+            return
+
+        is_online = status.get('online', False)
+        state = "ON" if status.get('is_on') else "OFF"
+        self.system_state[key]["online"] = is_online
+        self.system_state[key]["state"] = state
+
+        if is_online:
+            self.system_state[key]["last_error"] = None
+            logger.info(f"{name}: ONLINE | State: {state}")
+        else:
+            message = f"{name} is offline in Tuya Cloud; commands will not switch the heater until the device is online."
+            self.system_state[key]["last_error"] = message
+            logger.error(message)
+
     def get_state(self):
         """Returns the current system state for UI."""
         return {
@@ -380,6 +461,8 @@ class SmartWaterController:
         logger.info(f"Smart Cooldown Enabled: {Config.SMART_COOLDOWN_ENABLED}")
         logger.info(f"Storage Heater Enabled: {Config.STORAGE_HEATER_ENABLED}")
         logger.info(f"Off-Peak Heater Target: {Config.OFF_PEAK_HEATER_TARGET}")
+        logger.info(f"Main Heater Control: {Config.MAIN_HEATER_CONTROL}")
+        logger.info(f"Second Heater Control: {Config.SECOND_HEATER_CONTROL}")
         if not Config.STORAGE_HEATER_ENABLED:
             logger.info("Storage heater is configured as physically switched off; off-peak slots will use the main heater.")
         if Config.BLOCKED_HOURS:

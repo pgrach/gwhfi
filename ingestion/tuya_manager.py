@@ -300,6 +300,8 @@ class TuyaManager:
     def _failure_response(self, result, operation, device_id):
         code = self._account_error(result)
         msg = result.get('msg') if isinstance(result, dict) else str(result)
+        if not msg and isinstance(result, dict) and result.get('success') is True and result.get('result') is False:
+            msg = "Tuya accepted the request but returned result=false; the device is likely offline or unable to execute the command"
         error_name = TUYA_ACCOUNT_ERROR_CODES.get(code)
 
         if code:
