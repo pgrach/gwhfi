@@ -28,35 +28,59 @@ TUYA_ACCOUNT_ERROR_CODES = {
 class TuyaManager:
     def __init__(self):
         self.enabled = False
+        self.cloud_enabled = False
+        self.local_enabled = False
+        self.local_devices = {}
         self.last_error = None
+        self.control_mode = Config.TUYA_CONTROL_MODE
+
+        if self.control_mode not in {'cloud', 'local', 'local_then_cloud'}:
+            logger.warning(f"Unknown TUYA_CONTROL_MODE={self.control_mode}. Falling back to cloud.")
+            self.control_mode = 'cloud'
 
         if tinytuya is None:
             logger.error("TinyTuya is not installed. Tuya control logic will be DISABLED.")
             return
 
-        if not Config.validate():
-            logger.warning("Tuya Configuration missing. Control logic will be DISABLED.")
-            return
+        wants_cloud = self.control_mode in {'cloud', 'local_then_cloud'}
+        wants_local = self.control_mode in {'local', 'local_then_cloud'}
 
-        try:
-            self.cloud = tinytuya.Cloud(
-                apiRegion=Config.TUYA_REGION,
-                apiKey=Config.TUYA_ACCESS_ID,
-                apiSecret=Config.TUYA_ACCESS_KEY,
-                apiDeviceID=Config.TUYA_DEVICE_ID_MAIN
-            )
-            self.enabled = True
-        except Exception as e:
-            logger.error(f"Failed to initialize Tuya Cloud: {e}")
-            self.enabled = False
+        if wants_local:
+            self.local_enabled = self._has_any_local_config()
+            if not self.local_enabled:
+                logger.warning("Local Tuya control requested but local keys are missing.")
+
+        if wants_cloud and Config.validate_cloud():
+            try:
+                self.cloud = tinytuya.Cloud(
+                    apiRegion=Config.TUYA_REGION,
+                    apiKey=Config.TUYA_ACCESS_ID,
+                    apiSecret=Config.TUYA_ACCESS_KEY,
+                    apiDeviceID=Config.TUYA_DEVICE_ID_MAIN
+                )
+                self.cloud_enabled = True
+            except Exception as e:
+                logger.error(f"Failed to initialize Tuya Cloud: {e}")
+                self.cloud_enabled = False
+        elif wants_cloud:
+            logger.warning("Tuya cloud configuration missing. Cloud control will be disabled.")
+
+        self.enabled = self.cloud_enabled or self.local_enabled
 
     def get_status(self, device_id):
         """
         Gets full device status including online/offline state.
         Returns a dict with 'online' (bool) and 'is_on' (bool).
         """
-        if not self.enabled:
-            return {'success': False, 'error': 'Tuya control disabled'}
+        if self.control_mode in {'local', 'local_then_cloud'} and self.has_local_config(device_id):
+            local_result = self.get_local_status(device_id)
+            if local_result.get('success') or self.control_mode == 'local':
+                return local_result
+
+            logger.warning(f"Local Tuya status failed for {device_id}; trying cloud fallback.")
+
+        if not self.cloud_enabled:
+            return {'success': False, 'error': 'Tuya cloud control disabled'}
 
         try:
             result = self.cloud.cloudrequest(f'/v1.0/devices/{device_id}')
@@ -97,9 +121,16 @@ class TuyaManager:
         return self._send_command(device_id, False)
 
     def _send_command(self, device_id, switch_state):
-        if not self.enabled:
-            logger.debug(f"Control disabled. Skipping command to {device_id}")
-            return {'success': False, 'error': 'Tuya control disabled'}
+        if self.control_mode in {'local', 'local_then_cloud'} and self.has_local_config(device_id):
+            local_result = self._send_local_command(device_id, switch_state)
+            if local_result.get('success') or self.control_mode == 'local':
+                return local_result
+
+            logger.warning(f"Local Tuya command failed for {device_id}; trying cloud fallback.")
+
+        if not self.cloud_enabled:
+            logger.debug(f"Cloud control disabled. Skipping cloud command to {device_id}")
+            return {'success': False, 'error': 'Tuya cloud control disabled'}
 
         commands = {
             "commands": [
@@ -132,6 +163,127 @@ class TuyaManager:
 
     def _command_path(self, device_id):
         return f"/v1.0/iot-03/devices/{device_id}/commands"
+
+    def get_local_status(self, device_id):
+        if not self.has_local_config(device_id):
+            return {'success': False, 'error': 'Local Tuya config missing'}
+
+        try:
+            device = self._get_local_device(device_id)
+            result = device.status()
+            if self._local_success_response(result):
+                switch_state = self._local_switch_state(result, self._local_config(device_id)['dps'])
+                return {
+                    'online': True,
+                    'is_on': switch_state,
+                    'raw': result,
+                    'success': True,
+                    'source': 'local'
+                }
+
+            self.last_error = self._local_failure_response(result, "local status fetch", device_id)
+            return self.last_error
+        except Exception as e:
+            logger.error(f"Error getting local status for device {device_id}: {e}")
+            self.last_error = {'success': False, 'error': str(e), 'source': 'local'}
+            return self.last_error
+
+    def has_local_config(self, device_id):
+        cfg = self._local_config(device_id)
+        return bool(cfg and cfg['device_id'] and cfg['local_key'])
+
+    def _has_any_local_config(self):
+        return (
+            self.has_local_config(Config.TUYA_DEVICE_ID_MAIN)
+            or self.has_local_config(Config.TUYA_DEVICE_ID_SECOND)
+        )
+
+    def _local_config(self, device_id):
+        if device_id == Config.TUYA_DEVICE_ID_MAIN:
+            return {
+                'device_id': Config.TUYA_DEVICE_ID_MAIN,
+                'address': Config.TUYA_DEVICE_IP_MAIN,
+                'local_key': Config.TUYA_LOCAL_KEY_MAIN,
+                'version': Config.TUYA_PROTOCOL_VERSION_MAIN,
+                'dps': Config.TUYA_LOCAL_DPS_MAIN,
+            }
+
+        if device_id == Config.TUYA_DEVICE_ID_SECOND:
+            return {
+                'device_id': Config.TUYA_DEVICE_ID_SECOND,
+                'address': Config.TUYA_DEVICE_IP_SECOND,
+                'local_key': Config.TUYA_LOCAL_KEY_SECOND,
+                'version': Config.TUYA_PROTOCOL_VERSION_SECOND,
+                'dps': Config.TUYA_LOCAL_DPS_SECOND,
+            }
+
+        return None
+
+    def _get_local_device(self, device_id):
+        if device_id in self.local_devices:
+            return self.local_devices[device_id]
+
+        cfg = self._local_config(device_id)
+        device = tinytuya.OutletDevice(
+            dev_id=cfg['device_id'],
+            address=cfg['address'],
+            local_key=cfg['local_key'],
+            version=cfg['version']
+        )
+        device.set_socketTimeout(5)
+        self.local_devices[device_id] = device
+        return device
+
+    def _send_local_command(self, device_id, switch_state):
+        if not self.has_local_config(device_id):
+            return {'success': False, 'error': 'Local Tuya config missing'}
+
+        try:
+            cfg = self._local_config(device_id)
+            device = self._get_local_device(device_id)
+            if switch_state:
+                result = device.turn_on(switch=cfg['dps'])
+            else:
+                result = device.turn_off(switch=cfg['dps'])
+
+            if self._local_success_response(result):
+                logger.info(f"Local Tuya command succeeded for {device_id} (State: {switch_state}): {result}")
+                return {'success': True, 'raw': result, 'source': 'local'}
+
+            self.last_error = self._local_failure_response(result, "local command", device_id)
+            return self.last_error
+        except Exception as e:
+            logger.error(f"Error sending local command to {device_id}: {e}")
+            self.last_error = {'success': False, 'error': str(e), 'source': 'local'}
+            return self.last_error
+
+    def _local_switch_state(self, result, dps):
+        dps_map = result.get('dps', {}) if isinstance(result, dict) else {}
+        value = dps_map.get(str(dps), dps_map.get(dps, False))
+        return bool(value)
+
+    def _local_success_response(self, result):
+        if not isinstance(result, dict):
+            return False
+
+        if result.get('success') is False:
+            return False
+
+        error_value = result.get('Error') or result.get('Err') or result.get('error')
+        if error_value:
+            return False
+
+        return True
+
+    def _local_failure_response(self, result, operation, device_id):
+        msg = result.get('Error') or result.get('Err') or result.get('error') if isinstance(result, dict) else str(result)
+        logger.error(f"Tuya {operation} failed for {device_id}: {msg}. Raw response: {result}")
+        return {
+            'success': False,
+            'msg': msg,
+            'source': 'local',
+            'raw': result
+        }
 
     def _success_response(self, result):
         if not isinstance(result, dict):

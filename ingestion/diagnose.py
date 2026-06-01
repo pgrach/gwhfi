@@ -69,6 +69,7 @@ def format_tuya_failure(status):
 
 def check_tuya():
     manager = TuyaManager()
+    print_result("Tuya control mode", True, Config.TUYA_CONTROL_MODE)
     devices = [
         ("Main heater", Config.TUYA_DEVICE_ID_MAIN),
         ("Second heater", Config.TUYA_DEVICE_ID_SECOND),
@@ -81,11 +82,26 @@ def check_tuya():
             all_ok = False
             continue
 
+        if manager.has_local_config(device_id):
+            local_status = manager.get_local_status(device_id)
+            if local_status and local_status.get('success'):
+                state = "ON" if local_status.get('is_on') else "OFF"
+                print_result(f"{name} local LAN", True, f"reachable, switch {state}")
+            else:
+                print_result(f"{name} local LAN", False, format_tuya_failure(local_status))
+                if Config.TUYA_CONTROL_MODE == 'local':
+                    all_ok = False
+        elif Config.TUYA_CONTROL_MODE in {'local', 'local_then_cloud'}:
+            print_result(f"{name} local LAN", False, "local key is not configured")
+            if Config.TUYA_CONTROL_MODE == 'local':
+                all_ok = False
+
         status = manager.get_status(device_id)
         if status and status.get('success'):
             state = "ON" if status.get('is_on') else "OFF"
             online = "online" if status.get('online') else "offline"
-            print_result(name, True, f"{online}, switch {state}")
+            source = status.get('source', 'cloud')
+            print_result(name, True, f"{online}, switch {state}, source {source}")
         else:
             print_result(name, False, format_tuya_failure(status))
             all_ok = False

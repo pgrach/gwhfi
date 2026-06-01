@@ -10,8 +10,32 @@ class Config:
     TUYA_ACCESS_KEY = os.getenv('TUYA_ACCESS_KEY')
     TUYA_REGION = os.getenv('TUYA_REGION', 'eu')
     TUYA_DEVICE_ID_MAIN = os.getenv('TUYA_DEVICE_ID_MAIN')
-    TUYA_DEVICE_ID_MAIN = os.getenv('TUYA_DEVICE_ID_MAIN')
     TUYA_DEVICE_ID_SECOND = os.getenv('TUYA_DEVICE_ID_SECOND')
+    TUYA_CONTROL_MODE = os.getenv('TUYA_CONTROL_MODE', 'cloud').lower()  # cloud, local, local_then_cloud
+    TUYA_DEVICE_IP_MAIN = os.getenv('TUYA_DEVICE_IP_MAIN', 'Auto')
+    TUYA_DEVICE_IP_SECOND = os.getenv('TUYA_DEVICE_IP_SECOND', 'Auto')
+    TUYA_LOCAL_KEY_MAIN = os.getenv('TUYA_LOCAL_KEY_MAIN')
+    TUYA_LOCAL_KEY_SECOND = os.getenv('TUYA_LOCAL_KEY_SECOND')
+
+    try:
+        TUYA_PROTOCOL_VERSION_MAIN = float(os.getenv('TUYA_PROTOCOL_VERSION_MAIN', 3.3))
+    except ValueError:
+        TUYA_PROTOCOL_VERSION_MAIN = 3.3
+
+    try:
+        TUYA_PROTOCOL_VERSION_SECOND = float(os.getenv('TUYA_PROTOCOL_VERSION_SECOND', 3.3))
+    except ValueError:
+        TUYA_PROTOCOL_VERSION_SECOND = 3.3
+
+    try:
+        TUYA_LOCAL_DPS_MAIN = int(os.getenv('TUYA_LOCAL_DPS_MAIN', 1))
+    except ValueError:
+        TUYA_LOCAL_DPS_MAIN = 1
+
+    try:
+        TUYA_LOCAL_DPS_SECOND = int(os.getenv('TUYA_LOCAL_DPS_SECOND', 1))
+    except ValueError:
+        TUYA_LOCAL_DPS_SECOND = 1
 
     # Shelly
     SHELLY_AUTH_KEY = os.getenv("SHELLY_CLOUD_AUTH_KEY")
@@ -53,13 +77,38 @@ class Config:
     RATE_PUBLISH_WINDOW_END = int(os.getenv('RATE_PUBLISH_WINDOW_END', 19))
 
     @staticmethod
-    def validate():
+    def validate_cloud():
         missing = []
         if not Config.TUYA_ACCESS_ID: missing.append("TUYA_ACCESS_ID")
         if not Config.TUYA_ACCESS_KEY: missing.append("TUYA_ACCESS_KEY")
         if not Config.TUYA_DEVICE_ID_MAIN: missing.append("TUYA_DEVICE_ID_MAIN")
-        
+
         if missing:
-            print(f"Warning: Missing configuration for {', '.join(missing)}. Device control will fail.")
+            print(f"Warning: Missing cloud configuration for {', '.join(missing)}.")
             return False
         return True
+
+    @staticmethod
+    def validate_local(device_id=None):
+        missing = []
+        if not Config.TUYA_DEVICE_ID_MAIN:
+            missing.append("TUYA_DEVICE_ID_MAIN")
+
+        if device_id == Config.TUYA_DEVICE_ID_SECOND:
+            if not Config.TUYA_DEVICE_ID_SECOND:
+                missing.append("TUYA_DEVICE_ID_SECOND")
+            if not Config.TUYA_LOCAL_KEY_SECOND:
+                missing.append("TUYA_LOCAL_KEY_SECOND")
+        elif not Config.TUYA_LOCAL_KEY_MAIN:
+            missing.append("TUYA_LOCAL_KEY_MAIN")
+
+        if missing:
+            print(f"Warning: Missing local Tuya configuration for {', '.join(missing)}.")
+            return False
+        return True
+
+    @staticmethod
+    def validate():
+        if Config.TUYA_CONTROL_MODE == 'local':
+            return Config.validate_local()
+        return Config.validate_cloud()
