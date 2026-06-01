@@ -52,8 +52,8 @@ class SmartWaterController:
 
         # State storage for UI
         self.system_state = {
-            "peak_heater": {"online": False, "state": "UNKNOWN"},
-            "off_peak_heater": {"online": False, "state": "UNKNOWN"},
+            "peak_heater": {"online": False, "state": "UNKNOWN", "last_error": None},
+            "off_peak_heater": {"online": False, "state": "UNKNOWN", "last_error": None},
             "cooldown_mode": False,
             "cooldown_until": None,
             "last_updated": None,
@@ -242,6 +242,10 @@ class SmartWaterController:
 
     def apply_device_state(self, device_id, target_state, device_name, slot_info=None):
         """Applies state to device if needed."""
+        if not device_id:
+            logger.warning(f"{device_name} has no Tuya device id configured; skipping control.")
+            return
+
         key = "peak_heater" if device_id == Config.TUYA_DEVICE_ID_MAIN else "off_peak_heater"
         
         # Pull from internal cache instead of polling Tuya API directly
@@ -271,14 +275,20 @@ class SmartWaterController:
                     result = self.tuya.turn_on(device_id)
                 else:
                     result = self.tuya.turn_off(device_id)
-                    
-                # Handle Tuya response explicitly
-                if isinstance(result, dict) and result.get('quota_exceeded'):
-                    logger.error(f"⚠️ TUYA API FAILURE: Quota is exhausted. Forcing {device_name} to remain ON as failsafe!")
-                    self.system_state[key]["state"] = "ON"
-                else:
-                    # Assume success or normal failure, update cache to what we tried to set it to
+
+                if isinstance(result, dict) and result.get('success'):
+                    self.system_state[key]["online"] = True
                     self.system_state[key]["state"] = "ON" if target_state else "OFF"
+                    self.system_state[key]["last_error"] = None
+                else:
+                    error_msg = result.get('msg') or result.get('error') if isinstance(result, dict) else result
+                    self.system_state[key]["last_error"] = error_msg
+                    logger.error(
+                        f"Tuya command for {device_name} did not succeed. "
+                        f"Keeping cached state as {current_state_str} so the controller retries. "
+                        f"Response: {result}"
+                    )
+                return
             else:
                 logger.info("[DRY RUN] Command skipped.")
 
@@ -295,26 +305,28 @@ class SmartWaterController:
             if not dev_id: continue
             
             status = self.tuya.get_status(dev_id)
-            if isinstance(status, dict) and status.get('quota_exceeded'):
-                logger.error(f"⚠️ {name}: TUYA API QUOTA EXHAUSTED! Forcing State to ON.")
-                self.system_state[key]["online"] = True
-                self.system_state[key]["state"] = "ON"
-            elif status and status.get('success', False):
+            if not (status and status.get('success', False)):
+                logger.error(f"Warning: {name}: STATUS UNKNOWN. Response: {status}")
+                self.system_state[key]["online"] = False
+                self.system_state[key]["state"] = "UNKNOWN"
+                if isinstance(status, dict):
+                    self.system_state[key]["last_error"] = status.get('msg') or status.get('error') or status
+                else:
+                    self.system_state[key]["last_error"] = status
+                continue
+            if status and status.get('success', False):
                 is_online = status.get('online', False)
                 state = "ON" if status.get('is_on') else "OFF"
                 
                 # Update Cache
                 self.system_state[key]["online"] = is_online
                 self.system_state[key]["state"] = state
+                self.system_state[key]["last_error"] = None
                 
                 if is_online:
                     logger.info(f"✅ {name}: ONLINE | State: {state}")
                 else:
                     logger.warning(f"❌ {name}: OFFLINE | (Last State: {state})")
-            else:
-                logger.error(f"⚠️ {name}: STATUS UNKNOWN (Connection Error)")
-                self.system_state[key]["online"] = False
-                self.system_state[key]["state"] = "UNKNOWN"
         
         logger.info("--- HEALTH CHECK COMPLETE ---\n")
         

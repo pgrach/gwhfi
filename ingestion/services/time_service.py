@@ -1,5 +1,6 @@
 import ntplib
 import logging
+import os
 from datetime import datetime, timezone
 import pytz
 import time
@@ -15,6 +16,7 @@ class TimeService:
         self.ntp_servers = ['pool.ntp.org', 'time.google.com', 'time.windows.com']
         self.offset = 0
         self.last_check = 0
+        self.strict_time_check = os.getenv('STRICT_TIME_CHECK', 'false').lower() == 'true'
 
     def now(self):
         """Returns current UTC time (aware)"""
@@ -51,8 +53,12 @@ class TimeService:
                 logger.warning(f"Failed to check NTP time from {server}: {e}")
                 continue # Try next server
         
-        logger.error("All NTP servers failed to respond.")
-        return None, False
+        if self.strict_time_check:
+            logger.error("All NTP servers failed to respond and STRICT_TIME_CHECK is enabled.")
+            return None, False
+
+        logger.warning("All NTP servers failed to respond. Trusting system clock because STRICT_TIME_CHECK is disabled.")
+        return None, True
 
 if __name__ == "__main__":
     ts = TimeService()

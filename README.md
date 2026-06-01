@@ -57,8 +57,9 @@ This project consists of three main components:
 Ensure your `.env` (or Railway variables) includes:
 *   `BLOCKED_HOURS=[7, 8, 16, 17, 18]`
 *   Tuya Credentials (`TUYA_ACCESS_ID`, `TUYA_ACCESS_KEY`, etc.)
+*   `STRICT_TIME_CHECK=false` (default). Set to `true` only if the controller should abort when NTP is unreachable.
 *   (Optional, for landing page pilot lead notifications) `RESEND_API_KEY`, `LEADS_FROM_EMAIL`, `LEADS_TO_EMAIL`
-*   **Important**: If Tuya control stops working, verify your **IoT Core Trial** hasn't expired. You can extend it for free in the Tuya Console.
+*   **Important**: If Tuya control stops working, run `python diagnose.py` and verify your **IoT Core Trial/API subscription** has not expired or exhausted quota in the Tuya Console.
 
 **Start Script**:
 Use the helper script to run both services:
