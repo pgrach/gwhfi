@@ -79,3 +79,9 @@ python diagnose.py
 This will check the status of:
 1.  Tuya API Connection (Main + Second Heater)
 2.  Shelly API Connection (Power Readings)
+
+To test switching without waiting for a scheduled slot:
+```bash
+python ingestion/set_heater.py storage on
+python ingestion/set_heater.py storage off
+```
