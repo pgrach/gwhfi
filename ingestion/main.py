@@ -241,8 +241,8 @@ class SmartWaterController:
                 else:
                     logger.warning("Failed to read power. Cannot verify Tank Full status.")
 
-        # 3. Apply controls. Heater 2 is usually physically switched off in this home.
-        # In that one-heater setup, route off-peak scheduled slots to the main heater.
+        # 3. Apply controls. Normal setup routes off-peak scheduled slots to the lower/storage heater.
+        # The main-heater route is available as an explicit fallback when configured.
         if Config.OFF_PEAK_HEATER_TARGET == 'main':
             active_main = active_peak or active_offpeak
             main_slot = slot_peak if active_peak else slot_offpeak
@@ -254,7 +254,7 @@ class SmartWaterController:
             else:
                 self.system_state["off_peak_heater"]["online"] = False
                 self.system_state["off_peak_heater"]["state"] = "DISABLED"
-                self.system_state["off_peak_heater"]["last_error"] = "Storage heater physically switched off; off-peak slots routed to main heater."
+                self.system_state["off_peak_heater"]["last_error"] = "Storage heater disabled by config; off-peak slots routed to main heater."
         else:
             # Peak heater ignores cooldown logic because it is the free/negative-price strategy.
             self.apply_heater_state("peak_heater", Config.TUYA_DEVICE_ID_MAIN, active_peak, "Peak Heater", slot_peak)
@@ -376,10 +376,10 @@ class SmartWaterController:
         if Config.STORAGE_HEATER_ENABLED or Config.OFF_PEAK_HEATER_TARGET == 'second':
             devices.append(("Off-Peak Heater", Config.TUYA_DEVICE_ID_SECOND, "off_peak_heater"))
         else:
-            logger.info("Off-Peak/Storage Heater: skipped health check because it is configured as physically switched off.")
+            logger.info("Off-Peak/Storage Heater: skipped health check because off-peak slots are routed to main heater.")
             self.system_state["off_peak_heater"]["online"] = False
             self.system_state["off_peak_heater"]["state"] = "DISABLED"
-            self.system_state["off_peak_heater"]["last_error"] = "Storage heater physically switched off; off-peak slots routed to main heater."
+            self.system_state["off_peak_heater"]["last_error"] = "Storage heater disabled by config; off-peak slots routed to main heater."
 
         for name, dev_id, key in devices:
             self._check_heater_health(name, dev_id, key)
@@ -464,7 +464,11 @@ class SmartWaterController:
         logger.info(f"Main Heater Control: {Config.MAIN_HEATER_CONTROL}")
         logger.info(f"Second Heater Control: {Config.SECOND_HEATER_CONTROL}")
         if not Config.STORAGE_HEATER_ENABLED:
-            logger.info("Storage heater is configured as physically switched off; off-peak slots will use the main heater.")
+            logger.info("Storage heater is disabled by config.")
+        if Config.OFF_PEAK_HEATER_TARGET == 'main':
+            logger.info("Off-peak slots will use the main heater.")
+        else:
+            logger.info("Off-peak slots will use the lower/storage heater.")
         if Config.BLOCKED_HOURS:
             logger.info(f"Blocked hours: {Config.BLOCKED_HOURS}")
 
