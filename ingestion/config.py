@@ -64,6 +64,7 @@ class Config:
         ABSOLUTE_MAX_PRICE = 30.0
 
     USE_BELOW_AVERAGE = os.getenv('USE_BELOW_AVERAGE', 'true').lower() == 'true'
+    SMART_COOLDOWN_ENABLED = os.getenv('SMART_COOLDOWN_ENABLED', 'false').lower() == 'true'
 
     # Blocked hours - times when heating should NEVER occur (e.g., morning peak)
     # Format: JSON array of hours [7, 8] blocks 07:00-09:00

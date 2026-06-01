@@ -60,6 +60,7 @@ Ensure your `.env` (or Railway variables) includes:
 *   `TUYA_CONTROL_MODE=cloud` by default. Use `local` to avoid Tuya Cloud commands, or `local_then_cloud` to try LAN control first.
 *   For local Tuya control, set `TUYA_LOCAL_KEY_MAIN`, `TUYA_LOCAL_KEY_SECOND`, and optionally `TUYA_DEVICE_IP_MAIN`, `TUYA_DEVICE_IP_SECOND`, `TUYA_PROTOCOL_VERSION_MAIN`, `TUYA_PROTOCOL_VERSION_SECOND`, `TUYA_LOCAL_DPS_MAIN`, `TUYA_LOCAL_DPS_SECOND`.
 *   Local Tuya control only works when this Python controller runs on the same LAN as the heater switches, unless the LAN is reachable over a VPN/tunnel.
+*   `SMART_COOLDOWN_ENABLED=false` (default). Set to `true` only if low Shelly power should turn the storage heater off for cooldown during an active slot.
 *   `STRICT_TIME_CHECK=false` (default). Set to `true` only if the controller should abort when NTP is unreachable.
 *   (Optional, for landing page pilot lead notifications) `RESEND_API_KEY`, `LEADS_FROM_EMAIL`, `LEADS_TO_EMAIL`
 *   **Important**: If Tuya control stops working, run `python diagnose.py` and verify your **IoT Core Trial/API subscription** has not expired or exhausted quota in the Tuya Console.

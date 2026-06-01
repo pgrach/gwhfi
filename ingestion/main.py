@@ -208,35 +208,38 @@ class SmartWaterController:
         elif active_offpeak and not self.cooldown_until:
             # We are ON. Check Power Consumption.
             # Using Channel 1 for Off-Peak Heater
-            power = self.shelly.get_power(channel=1)
-
-            if power is not None:
-                # Check for Mechanical Timer Grace Period
-                # If the previous hour was blocked, the mechanical timer might be slow to close.
-                # Allow a 30-minute buffer where we ignore 0W readings.
-                prev_hour = (now_utc.hour - 1) % 24
-                is_grace_period = (prev_hour in Config.BLOCKED_HOURS) and (now_utc.minute < 30)
-
-                if is_grace_period and power < self.LOW_POWER_THRESHOLD:
-                    logger.info(f"⏳ Grace Period (Mechanical Switch Lag): Ignoring low power ({power}W).")
-                    self.low_power_count = 0 
-                elif power < self.LOW_POWER_THRESHOLD:
-                    self.low_power_count += 1
-                    logger.debug(f"Low power reading {self.low_power_count}/{self.LOW_POWER_READINGS_REQUIRED} ({power}W)")
-
-                    if self.low_power_count >= self.LOW_POWER_READINGS_REQUIRED:
-                        # Confirmed tank is full after multiple consecutive low readings
-                        logger.info(f"📉 Tank Full Confirmed ({self.low_power_count} consecutive readings < {self.LOW_POWER_THRESHOLD}W). Triggering Smart Cooldown.")
-                        self.cooldown_until = now_utc + timedelta(minutes=90)
-                        active_offpeak = False
-                        self.low_power_count = 0  # Reset counter
-                else:
-                    # Power is normal (heater actively drawing), reset counter
-                    if self.low_power_count > 0:
-                        logger.debug(f"Power restored ({power}W). Resetting low power counter.")
-                    self.low_power_count = 0
+            if not Config.SMART_COOLDOWN_ENABLED:
+                self.low_power_count = 0
             else:
-                logger.warning("Failed to read power. Cannot verify Tank Full status.")
+                power = self.shelly.get_power(channel=1)
+
+                if power is not None:
+                    # Check for Mechanical Timer Grace Period
+                    # If the previous hour was blocked, the mechanical timer might be slow to close.
+                    # Allow a 30-minute buffer where we ignore 0W readings.
+                    prev_hour = (now_utc.hour - 1) % 24
+                    is_grace_period = (prev_hour in Config.BLOCKED_HOURS) and (now_utc.minute < 30)
+
+                    if is_grace_period and power < self.LOW_POWER_THRESHOLD:
+                        logger.info(f"⏳ Grace Period (Mechanical Switch Lag): Ignoring low power ({power}W).")
+                        self.low_power_count = 0
+                    elif power < self.LOW_POWER_THRESHOLD:
+                        self.low_power_count += 1
+                        logger.debug(f"Low power reading {self.low_power_count}/{self.LOW_POWER_READINGS_REQUIRED} ({power}W)")
+
+                        if self.low_power_count >= self.LOW_POWER_READINGS_REQUIRED:
+                            # Confirmed tank is full after multiple consecutive low readings
+                            logger.info(f"📉 Tank Full Confirmed ({self.low_power_count} consecutive readings < {self.LOW_POWER_THRESHOLD}W). Triggering Smart Cooldown.")
+                            self.cooldown_until = now_utc + timedelta(minutes=90)
+                            active_offpeak = False
+                            self.low_power_count = 0  # Reset counter
+                    else:
+                        # Power is normal (heater actively drawing), reset counter
+                        if self.low_power_count > 0:
+                            logger.debug(f"Power restored ({power}W). Resetting low power counter.")
+                        self.low_power_count = 0
+                else:
+                    logger.warning("Failed to read power. Cannot verify Tank Full status.")
 
         self.apply_device_state(Config.TUYA_DEVICE_ID_SECOND, active_offpeak, "Off-Peak Heater", slot_offpeak)
 
@@ -350,6 +353,7 @@ class SmartWaterController:
 
         logger.info("Starting Control Loop (Press Ctrl+C to stop)")
         logger.info(f"Smart Scheduler Config: Budget={Config.DAILY_HEATING_BUDGET_HOURS}h, MaxPrice={Config.ABSOLUTE_MAX_PRICE}p, BelowAvg={Config.USE_BELOW_AVERAGE}")
+        logger.info(f"Smart Cooldown Enabled: {Config.SMART_COOLDOWN_ENABLED}")
         if Config.BLOCKED_HOURS:
             logger.info(f"Blocked hours: {Config.BLOCKED_HOURS}")
 
