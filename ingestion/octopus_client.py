@@ -27,7 +27,9 @@ class OctopusClient:
             params['period_to'] = period_to
             
         try:
-            response = requests.get(url, params=params)
+            # Keep the heater reconciliation loop from being blocked
+            # indefinitely by an upstream outage.
+            response = requests.get(url, params=params, timeout=15)
             response.raise_for_status()
             data = response.json()
             

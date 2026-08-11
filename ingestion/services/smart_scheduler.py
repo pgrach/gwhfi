@@ -11,6 +11,7 @@ time windows. The algorithm:
 
 import logging
 from datetime import datetime, timedelta
+import pytz
 
 logger = logging.getLogger(__name__)
 
@@ -22,10 +23,18 @@ class SmartScheduler:
 
     def __init__(self, config):
         self.config = config
+        # pytz is already an application dependency and bundles the IANA zone
+        # database on Windows as well as Linux.  This keeps local development
+        # and Railway on the same Europe/London DST rules.
+        self.timezone = pytz.timezone(getattr(config, 'LOCAL_TIMEZONE', 'Europe/London'))
         self.last_schedule_computation = None
         self.last_rate_check = None
         self.tomorrow_scheduled = False
         self.current_schedule = []
+
+    def _local_start(self, slot):
+        """Return a rate slot's start in the configured household timezone."""
+        return slot['valid_from'].astimezone(self.timezone)
 
     def compute_schedule_for_date(self, target_date, rates, budget_hours, max_price, use_below_average, blocked_hours):
         """
@@ -47,7 +56,7 @@ class SmartScheduler:
             return []
 
         # Filter rates to only match the target_date
-        daily_rates = [r for r in rates if r['valid_from'].date() == target_date]
+        daily_rates = [r for r in rates if self._local_start(r).date() == target_date]
 
         if not daily_rates:
             logger.warning(f"No rates found for target date: {target_date}")
@@ -68,7 +77,7 @@ class SmartScheduler:
         rejected_blocked = []
 
         for slot in daily_rates:
-            hour = slot['valid_from'].hour
+            hour = self._local_start(slot).hour
 
             # Check if hour is blocked
             if hour in blocked_hours:
@@ -94,13 +103,13 @@ class SmartScheduler:
         # hot until wake-up.
         morning_candidates = []
         for slot in eligible:
-            h = slot['valid_from'].hour
+            h = self._local_start(slot).hour
             if 0 <= h < 6:
                 morning_candidates.append(slot)
 
         # Sort by price first, then by hour DESCENDING (later = closer to morning)
         # so that among equally-priced slots, later ones are preferred.
-        morning_candidates.sort(key=lambda s: (s['value_inc_vat'], -s['valid_from'].hour))
+        morning_candidates.sort(key=lambda s: (s['value_inc_vat'], -self._local_start(s).hour))
         selected_morning = morning_candidates[:morning_slots_needed]
 
         if not selected_morning and morning_candidates:
@@ -117,11 +126,11 @@ class SmartScheduler:
             # Fallback: pick latest available morning slots under hard limit
             fallback_morning = [
                 s for s in eligible
-                if 0 <= s['valid_from'].hour < 6
+                if 0 <= self._local_start(s).hour < 6
                 and f"{s['valid_from']}" not in selected_morning_ids
             ]
             # Prefer latest slots (closest to wakeup)
-            fallback_morning.sort(key=lambda s: -s['valid_from'].hour)
+            fallback_morning.sort(key=lambda s: -self._local_start(s).hour)
             selected_morning.extend(fallback_morning[:shortfall])
             if fallback_morning[:shortfall]:
                 logger.info(f"Morning fallback: added {len(fallback_morning[:shortfall])} later slots to ensure hot water.")
@@ -130,7 +139,7 @@ class SmartScheduler:
         selected_morning_ids = {f"{s['valid_from']}" for s in selected_morning}
         afternoon_candidates = []
         for slot in eligible:
-            h = slot['valid_from'].hour
+            h = self._local_start(slot).hour
             if 14 <= h < 16 and f"{slot['valid_from']}" not in selected_morning_ids:
                 afternoon_candidates.append(slot)
 
@@ -141,8 +150,9 @@ class SmartScheduler:
         already_selected_ids = {f"{s['valid_from']}" for s in selected_morning + selected_afternoon}
         evening_candidates = []
         for slot in eligible:
-            h = slot['valid_from'].hour
-            m = slot['valid_from'].minute
+            local_start = self._local_start(slot)
+            h = local_start.hour
+            m = local_start.minute
             if (19 <= h < 23 or (h == 23 and m < 30)) and f"{slot['valid_from']}" not in already_selected_ids:
                 evening_candidates.append(slot)
 
@@ -164,7 +174,7 @@ class SmartScheduler:
 
         def effective_price(slot):
             price = slot['value_inc_vat']
-            hour_index = slot['valid_from'].hour
+            hour_index = self._local_start(slot).hour
             return price - (0.01 * hour_index)
 
         remaining_candidates.sort(key=effective_price)
@@ -242,8 +252,9 @@ class SmartScheduler:
 
     def has_tomorrow_rates(self, rates, current_time):
         """Check if we have rates for tomorrow."""
-        tomorrow = (current_time + timedelta(days=1)).date()
-        return any(r['valid_from'].date() == tomorrow for r in rates)
+        local_now = current_time.astimezone(self.timezone)
+        tomorrow = (local_now + timedelta(days=1)).date()
+        return any(self._local_start(r).date() == tomorrow for r in rates)
 
     def mark_rate_check(self, current_time):
         """Record that we just checked rates."""

@@ -49,7 +49,7 @@ class ScheduleStorage:
                 "Prefer": "return=minimal"
             }
 
-    def save_schedule(self, slots, heater_type="off_peak"):
+    def save_schedule(self, slots, heater_type="off_peak", replace_from=None, replace_to=None):
         """
         Saves heating schedule to Supabase.
         Clears old schedule for the heater type and inserts new slots.
@@ -62,35 +62,41 @@ class ScheduleStorage:
             logger.debug("Schedule storage disabled, skipping save.")
             return False
 
-        if not slots:
-            logger.info(f"No slots to save for {heater_type}")
-            return True
-
         try:
-            # Determine the date range covered by the slots being saved
-            # Delete ALL existing rows for this heater type in that range,
-            # not just future ones, to avoid duplicate key conflicts
-            slot_starts = []
-            for slot in slots:
-                s = slot['valid_from']
-                if hasattr(s, 'isoformat'):
-                    slot_starts.append(s)
-                else:
-                    slot_starts.append(datetime.fromisoformat(s))
+            def format_boundary(value):
+                text = value.isoformat() if hasattr(value, 'isoformat') else str(value)
+                return text.replace('+00:00', 'Z')
 
-            range_start = min(slot_starts).strftime('%Y-%m-%dT%H:%M:%SZ')
-            range_end = (max(slot_starts) + timedelta(hours=1)).strftime('%Y-%m-%dT%H:%M:%SZ')
+            if replace_from is not None and replace_to is not None:
+                range_start = format_boundary(replace_from)
+                range_end = format_boundary(replace_to)
+            elif slots:
+                slot_starts = []
+                for slot in slots:
+                    s = slot['valid_from']
+                    slot_starts.append(s if hasattr(s, 'isoformat') else datetime.fromisoformat(s))
+                range_start = format_boundary(min(slot_starts))
+                range_end = format_boundary(max(slot_starts) + timedelta(hours=1))
+            else:
+                logger.info(f"No slots or replacement window supplied for {heater_type}")
+                return True
 
             delete_url = f"{self.supabase_url}/rest/v1/heating_schedule"
             delete_params = f"heater_type=eq.{heater_type}&slot_start=gte.{range_start}&slot_start=lt.{range_end}"
 
             delete_response = requests.delete(
                 f"{delete_url}?{delete_params}",
-                headers=self.headers
+                headers=self.headers,
+                timeout=15,
             )
 
             if delete_response.status_code not in [200, 204]:
-                logger.warning(f"Failed to clear old schedule: {delete_response.status_code} - {delete_response.text}")
+                logger.error(f"Failed to clear old schedule: {delete_response.status_code} - {delete_response.text}")
+                return False
+
+            if not slots:
+                logger.info(f"Cleared schedule for {heater_type}; no replacement slots selected")
+                return True
 
             # Insert new schedule
             rows = []
@@ -117,7 +123,8 @@ class ScheduleStorage:
             response = requests.post(
                 insert_url,
                 json=rows,
-                headers=self.headers
+                headers=self.headers,
+                timeout=15,
             )
 
             if response.status_code in [200, 201]:
@@ -168,7 +175,8 @@ class ScheduleStorage:
             query_string = "&".join(params)
             response = requests.get(
                 f"{url}?{query_string}",
-                headers=self.headers
+                headers=self.headers,
+                timeout=15,
             )
 
             if response.status_code == 200:
