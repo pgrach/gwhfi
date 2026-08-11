@@ -36,6 +36,7 @@ export function CurrentRate() {
                     supabase
                         .from('heating_schedule')
                         .select('*')
+                        .eq('heater_type', 'off_peak')
                         .gt('slot_start', now.toISOString())
                         .order('slot_start', { ascending: true })
                         .limit(1)

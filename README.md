@@ -55,13 +55,14 @@ This project consists of three main components:
 
 **Environment Variables**:
 Ensure your `.env` (or Railway variables) includes:
+*   `DRY_RUN=true` is the safe default: schedules and control decisions are calculated, but heater commands are only logged. Set `DRY_RUN=false` only after the relay wiring, Shelly Cloud command path, and automatic OFF behaviour have been verified.
 *   `BLOCKED_HOURS=[7, 8, 16, 17, 18]`
 *   Tuya Credentials (`TUYA_ACCESS_ID`, `TUYA_ACCESS_KEY`, etc.)
 *   `STORAGE_HEATER_ENABLED=true` and `OFF_PEAK_HEATER_TARGET=second` for the normal setup where scheduled off-peak slots should heat with Heater 2 / Storage / Lower heater (green).
 *   `TUYA_CONTROL_MODE=cloud` by default. Use `local` to avoid Tuya Cloud commands, or `local_then_cloud` to try LAN control first.
 *   For local Tuya control, set `TUYA_LOCAL_KEY_MAIN`, `TUYA_LOCAL_KEY_SECOND`, and optionally `TUYA_DEVICE_IP_MAIN`, `TUYA_DEVICE_IP_SECOND`, `TUYA_PROTOCOL_VERSION_MAIN`, `TUYA_PROTOCOL_VERSION_SECOND`, `TUYA_LOCAL_DPS_MAIN`, `TUYA_LOCAL_DPS_SECOND`.
 *   Local Tuya control only works when this Python controller runs on the same LAN as the heater switches, unless the LAN is reachable over a VPN/tunnel.
-*   Optional Shelly relay control: set `MAIN_HEATER_CONTROL=shelly` and `SHELLY_RELAY_CHANNEL_MAIN=0` only if the Shelly relay is physically wired to switch the usable heater or contactor.
+*   Optional Shelly off-peak relay control: set `SECOND_HEATER_CONTROL=shelly`, `SHELLY_RELAY_DEVICE_ID`, and `SHELLY_RELAY_CHANNEL_SECOND=0` only after the Shelly Pro 1 is physically verified to switch the storage heater or its contactor. Keep the existing energy meter under `SHELLY_METER_DEVICE_ID`.
 *   `SMART_COOLDOWN_ENABLED=false` (default). Set to `true` only if low Shelly power should turn the storage heater off for cooldown during an active slot.
 *   `STRICT_TIME_CHECK=false` (default). Set to `true` only if the controller should abort when NTP is unreachable.
 *   (Optional, for landing page pilot lead notifications) `RESEND_API_KEY`, `LEADS_FROM_EMAIL`, `LEADS_TO_EMAIL`

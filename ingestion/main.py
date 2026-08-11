@@ -1,7 +1,7 @@
 import time
 import logging
 import schedule
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from config import Config
 from services.time_service import TimeService
 from services.shelly_manager import ShellyManager
@@ -22,11 +22,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class SmartWaterController:
-    def __init__(self, dry_run=False):
-        self.dry_run = dry_run
+    def __init__(self, dry_run=None):
+        self.dry_run = Config.DRY_RUN if dry_run is None else dry_run
         logger.info(f"Initializing Smart Water Controller (Dry Run: {self.dry_run})")
-        
-        self.time_service = TimeService()
+
+        if not Config.validate_shelly_control_routing():
+            raise SystemExit(
+                "Unsafe Shelly configuration: the single relay cannot control both heater routes."
+            )
+
+        self.time_service = TimeService(Config.LOCAL_TIMEZONE)
         
         self.tuya = TuyaManager()
         if not getattr(self.tuya, 'enabled', True):
@@ -89,7 +94,7 @@ class SmartWaterController:
         Replaces the old fixed 3-Window Strategy with dynamic rate-based scheduling.
         """
         now = self.time_service.now()
-        today = now.date()
+        today = self.time_service.get_local_time().date()
         tomorrow = today + timedelta(days=1)
 
         # Reset daily flags at midnight
@@ -148,9 +153,29 @@ class SmartWaterController:
             future_rates, Config.SECOND_HEATER_THRESHOLD
         )
 
-        # Save schedule to Supabase for frontend visualization
-        self.schedule_storage.save_schedule(self.main_heater_slots, heater_type="off_peak")
-        self.schedule_storage.save_schedule(self.second_heater_slots, heater_type="peak")
+        # Replace the complete local today/tomorrow window so stale green dots
+        # cannot survive when a recomputation selects fewer (or zero) slots.
+        local_start = self.time_service.timezone.localize(datetime.combine(today, datetime.min.time()))
+        local_end = self.time_service.timezone.localize(datetime.combine(tomorrow + timedelta(days=1), datetime.min.time()))
+        replace_from = local_start.astimezone(timezone.utc)
+        replace_to = local_end.astimezone(timezone.utc)
+        off_peak_saved = self.schedule_storage.save_schedule(
+            self.main_heater_slots,
+            heater_type="off_peak",
+            replace_from=replace_from,
+            replace_to=replace_to,
+        )
+        peak_saved = self.schedule_storage.save_schedule(
+            self.second_heater_slots,
+            heater_type="peak",
+            replace_from=replace_from,
+            replace_to=replace_to,
+        )
+        if self.schedule_storage.enabled and not (off_peak_saved and peak_saved):
+            logger.error(
+                "Schedule persistence failed; the dashboard markers may not match "
+                "the controller's in-memory schedule."
+            )
 
         # Update UI state
         self.system_state["rates"] = rates
@@ -279,15 +304,18 @@ class SmartWaterController:
         self.apply_device_state(device_id, target_state, device_name, slot_info, key=key)
 
     def apply_shelly_relay_state(self, key, channel, target_state, device_name, slot_info=None):
-        """Applies state to a Shelly relay channel if needed."""
+        """Apply state to a Shelly relay with a renewable fail-safe lease."""
         current_state_str = self.system_state[key].get("state", "UNKNOWN")
         is_online = self.system_state[key].get("online", False)
-        is_on = current_state_str == "ON"
 
         if not is_online:
             logger.warning(f"{device_name} Shelly relay status is not confirmed. Attempting control anyway...")
 
-        if is_on != target_state or current_state_str == "UNKNOWN":
+        # Reconcile the Shelly every control-loop pass.  ON renews the bounded
+        # auto-OFF lease; OFF is also repeated so a manual/app change cannot
+        # leave the immersion heater energized until the hourly health check.
+        should_command = True
+        if should_command:
             action = "Turning ON" if target_state else "Turning OFF"
             reason = f"Slot: {slot_info['value_inc_vat']}p until {slot_info['valid_to']}" if slot_info else "No active slot"
             if not target_state and self.cooldown_until:
@@ -296,7 +324,11 @@ class SmartWaterController:
             logger.info(f"{action} {device_name} via Shelly relay channel {channel} ({reason})")
 
             if not self.dry_run:
-                result = self.shelly.set_relay(channel=channel, turn_on=target_state)
+                result = self.shelly.set_relay(
+                    channel=channel,
+                    turn_on=target_state,
+                    toggle_after=Config.SHELLY_CONTROL_LEASE_SECONDS if target_state else None,
+                )
                 if isinstance(result, dict) and result.get("success"):
                     self.system_state[key]["online"] = True
                     self.system_state[key]["state"] = "ON" if target_state else "OFF"
@@ -463,6 +495,8 @@ class SmartWaterController:
         logger.info(f"Off-Peak Heater Target: {Config.OFF_PEAK_HEATER_TARGET}")
         logger.info(f"Main Heater Control: {Config.MAIN_HEATER_CONTROL}")
         logger.info(f"Second Heater Control: {Config.SECOND_HEATER_CONTROL}")
+        if Config.MAIN_HEATER_CONTROL == 'shelly' or Config.SECOND_HEATER_CONTROL == 'shelly':
+            logger.info(f"Shelly ON lease: {Config.SHELLY_CONTROL_LEASE_SECONDS}s")
         if not Config.STORAGE_HEATER_ENABLED:
             logger.info("Storage heater is disabled by config.")
         if Config.OFF_PEAK_HEATER_TARGET == 'main':
@@ -491,7 +525,9 @@ class SmartWaterController:
             logger.info("Stopping...")
 
 if __name__ == "__main__":
-    # LIVE MODE
-    logger.info("Starting Service in LIVE MODE...")
-    controller = SmartWaterController(dry_run=False)
+    if Config.DRY_RUN:
+        logger.warning("Starting Service in DRY RUN mode. Heater commands will be logged but not sent.")
+    else:
+        logger.warning("Starting Service in LIVE mode. Heater commands are enabled.")
+    controller = SmartWaterController(dry_run=Config.DRY_RUN)
     controller.run()

@@ -22,6 +22,7 @@ env/
 node_modules/
 out/
 build/
+*.tsbuildinfo
 
 # Temp repos
 v0-landing-page/

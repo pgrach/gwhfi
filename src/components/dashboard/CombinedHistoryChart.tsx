@@ -171,10 +171,11 @@ export function CombinedHistoryChart() {
                 }
             })()
 
-            // Fetch scheduled heating slots from Supabase
+            // Fetch only the off-peak schedule that drives the storage heater.
             const schedulePromise = supabase
                 .from('heating_schedule')
                 .select('*')
+                .eq('heater_type', 'off_peak')
                 .gte('slot_start', startIso)
                 .lte('slot_end', endIso)
                 .order('slot_start', { ascending: true })

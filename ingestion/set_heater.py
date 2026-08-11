@@ -29,11 +29,23 @@ def parse_args():
 
 def main():
     args = parse_args()
+    if Config.DRY_RUN:
+        print(
+            f"DRY RUN: {args.heater} would be turned {args.state.upper()}; "
+            "no heater command was sent."
+        )
+        return 0
+
     if args.heater in SHELLY_RELAYS:
         relay_name, channel_factory = SHELLY_RELAYS[args.heater]
         channel = channel_factory()
         manager = ShellyManager()
-        result = manager.set_relay(channel=channel, turn_on=args.state == "on")
+        turn_on = args.state == "on"
+        result = manager.set_relay(
+            channel=channel,
+            turn_on=turn_on,
+            toggle_after=Config.SHELLY_CONTROL_LEASE_SECONDS if turn_on else None,
+        )
 
         if isinstance(result, dict) and result.get("success"):
             print(f"OK: {relay_name} channel {channel} turned {args.state.upper()} via Shelly Cloud.")
