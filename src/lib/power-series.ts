@@ -15,3 +15,48 @@ export function bridgeSingleBucketGaps(values: Array<number | null>): Array<numb
         return previous !== null && previous > 0 && next !== null ? previous : null
     })
 }
+
+interface ScheduledPoint {
+    timestamp: string
+    isScheduled: boolean
+}
+
+export interface ScheduledPeriod {
+    start: string
+    end: string
+}
+
+export function formatScheduleRangeEnd(rawTime: number, bucketMinutes: number): string {
+    return new Date(rawTime + (bucketMinutes * 60_000)).toLocaleString([], {
+        timeZone: 'Europe/London',
+        month: bucketMinutes === 1 ? undefined : 'numeric',
+        day: bucketMinutes === 1 ? undefined : 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+    })
+}
+
+/** Merge adjacent scheduled buckets into continuous chart bands. */
+export function collectScheduledPeriods(
+    points: ScheduledPoint[],
+    rangeEnd?: string,
+): ScheduledPeriod[] {
+    const periods: ScheduledPeriod[] = []
+    let start: string | null = null
+
+    points.forEach((point, index) => {
+        if (point.isScheduled && start === null) {
+            start = point.timestamp
+        } else if (!point.isScheduled && start !== null) {
+            periods.push({ start, end: point.timestamp })
+            start = null
+        }
+
+        if (index === points.length - 1 && start !== null && rangeEnd) {
+            periods.push({ start, end: rangeEnd })
+        }
+    })
+
+    return periods
+}

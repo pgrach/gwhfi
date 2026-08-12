@@ -6,7 +6,8 @@ import { supabase } from "@/lib/supabase"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import {
-    LineChart,
+    ComposedChart,
+    Area,
     Line,
     XAxis,
     YAxis,
@@ -16,11 +17,10 @@ import {
     ResponsiveContainer,
     ReferenceArea,
     ReferenceLine,
-    type DotItemDotProps,
 } from "recharts"
 import { getUKDateBoundaries, getUKDateBoundariesForDate, getUKDateString } from "@/lib/date-utils"
 import { OCTOPUS_RATES_URL } from "@/lib/octopus-config"
-import { bridgeSingleBucketGaps } from "@/lib/power-series"
+import { bridgeSingleBucketGaps, collectScheduledPeriods, formatScheduleRangeEnd } from "@/lib/power-series"
 
 interface Rate {
     value_inc_vat: number
@@ -99,20 +99,6 @@ function interpolateCounterAt(
         wattHours: before.wattHours + ((after.wattHours - before.wattHours) * elapsedRatio),
         timestampMs: boundaryMs,
     }
-}
-
-function ScheduledDot({ cx, cy, payload }: DotItemDotProps) {
-    const point = payload as ChartPoint | undefined
-    if (typeof cx !== "number" || typeof cy !== "number" || !point?.isScheduled) {
-        return null
-    }
-
-    const minute = new Date(point.raw_time).getUTCMinutes()
-    if (minute % 30 !== 0) {
-        return null
-    }
-
-    return <circle cx={cx} cy={cy} r={4} fill="#10b981" stroke="#fff" strokeWidth={1} />
 }
 
 export function CombinedHistoryChart() {
@@ -494,27 +480,14 @@ export function CombinedHistoryChart() {
         }
     }, [viewMode, customDate, refreshKey])
 
-    // Identify measured "off" periods. Unknown telemetry must remain unshaded.
-    const offPeriods: Array<{ start: string; end: string }> = []
-    let offStart: string | null = null
-
-    data.forEach((point, idx) => {
-        const isBothOff = point.power_0 === 0 && point.power_1 === 0
-
-        if (isBothOff && offStart === null) {
-            // Start of off period
-            offStart = point.timestamp
-        } else if (!isBothOff && offStart !== null) {
-            // End of off period
-            offPeriods.push({ start: offStart, end: data[idx - 1]?.timestamp || offStart })
-            offStart = null
-        }
-    })
-
-    // Close any open off period at the end
-    if (offStart !== null && data.length > 0) {
-        offPeriods.push({ start: offStart, end: data[data.length - 1].timestamp })
-    }
+    const lastPoint = data.at(-1)
+    const chartBucketMinutes = (viewMode === "today" || viewMode === "tomorrow" || viewMode === "custom") ? 1 : 60
+    const scheduleRangeEnd = lastPoint
+        ? formatScheduleRangeEnd(lastPoint.raw_time, chartBucketMinutes)
+        : undefined
+    const scheduledPeriods = chartBucketMinutes === 1
+        ? collectScheduledPeriods(data, scheduleRangeEnd)
+        : []
 
     // Check for missing Tomorrow data
     // We check hasRates because 'data' might be populated with empty buckets
@@ -661,21 +634,29 @@ export function CombinedHistoryChart() {
                 </div>
             </CardHeader>
             <CardContent className="pl-2">
+                <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 px-2 text-xs text-muted-foreground">
+                    <span className="inline-flex items-center gap-1.5">
+                        <span className="h-3 w-5 rounded-sm border border-emerald-500/30 bg-emerald-500/10" />
+                        Scheduled storage-heater ON window
+                    </span>
+                    <span>Filled blue/green traces show measured power draw</span>
+                </div>
                 <div className="h-[400px] w-full">
                     <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={data}>
+                        <ComposedChart data={data}>
                             <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
 
-                            {/* Shade off periods */}
-                            {offPeriods.map((period, idx) => (
+                            {/* Show controller intent independently from measured power draw. */}
+                            {scheduledPeriods.map((period, idx) => (
                                 <ReferenceArea
-                                    key={`off-${idx}`}
+                                    key={`scheduled-${idx}`}
                                     x1={period.start}
                                     x2={period.end}
                                     yAxisId="right"
-                                    fill="#64748b"
+                                    fill="#10b981"
                                     fillOpacity={0.08}
-                                    strokeOpacity={0}
+                                    stroke="#10b981"
+                                    strokeOpacity={0.22}
                                 />
                             ))}
 
@@ -754,30 +735,36 @@ export function CombinedHistoryChart() {
                                 name="Rate (p/kWh)"
                                 stroke="#f050f8"
                                 strokeWidth={2}
-                                dot={ScheduledDot}
+                                dot={false}
                                 connectNulls
                             />
 
-                            {/* Heater Lines (Right Axis) */}
-                            <Line
+                            {/* Filled step traces make real heater cycling readable. */}
+                            <Area
                                 yAxisId="right"
                                 type="stepAfter"
                                 dataKey="power_0"
                                 name="Boost Heater (W)"
                                 stroke="#2563eb"
                                 strokeWidth={2}
+                                fill="#2563eb"
+                                fillOpacity={0.12}
+                                baseValue={0}
                                 dot={false}
                             />
-                            <Line
+                            <Area
                                 yAxisId="right"
                                 type="stepAfter"
                                 dataKey="power_1"
                                 name="Storage Heater (W)"
                                 stroke="#16a34a"
                                 strokeWidth={2}
+                                fill="#16a34a"
+                                fillOpacity={0.18}
+                                baseValue={0}
                                 dot={false}
                             />
-                        </LineChart>
+                        </ComposedChart>
                     </ResponsiveContainer>
                 </div>
             </CardContent>

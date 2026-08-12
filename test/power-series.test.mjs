@@ -14,7 +14,7 @@ const { outputText } = ts.transpileModule(source, {
     },
 })
 const moduleUrl = `data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`
-const { bridgeSingleBucketGaps } = await import(moduleUrl)
+const { bridgeSingleBucketGaps, collectScheduledPeriods, formatScheduleRangeEnd } = await import(moduleUrl)
 
 test("bridges one enclosed missing minute while the heater is active", () => {
     assert.deepEqual(
@@ -46,4 +46,39 @@ test("reconstructs channels independently", () => {
 
     assert.deepEqual(peak, [1200, 1200, 1180])
     assert.deepEqual(storage, [0, null, 3100])
+})
+
+test("merges adjacent scheduled buckets into continuous windows", () => {
+    assert.deepEqual(collectScheduledPeriods([
+        { timestamp: "00:00", isScheduled: false },
+        { timestamp: "00:30", isScheduled: true },
+        { timestamp: "01:00", isScheduled: true },
+        { timestamp: "01:30", isScheduled: false },
+        { timestamp: "02:00", isScheduled: true },
+        { timestamp: "02:30", isScheduled: false },
+    ]), [
+        { start: "00:30", end: "01:30" },
+        { start: "02:00", end: "02:30" },
+    ])
+})
+
+test("handles schedule windows at the range boundaries", () => {
+    assert.deepEqual(collectScheduledPeriods([
+        { timestamp: "00:00", isScheduled: true },
+        { timestamp: "00:30", isScheduled: false },
+    ]), [{ start: "00:00", end: "00:30" }])
+
+    assert.deepEqual(collectScheduledPeriods([
+        { timestamp: "23:30", isScheduled: true },
+        { timestamp: "23:59", isScheduled: true },
+    ], "24:00"), [{ start: "23:30", end: "24:00" }])
+
+    assert.deepEqual(collectScheduledPeriods([
+        { timestamp: "23:59", isScheduled: true },
+    ], "24:00"), [{ start: "23:59", end: "24:00" }])
+})
+
+test("formats an exclusive schedule-band endpoint one bucket later", () => {
+    assert.equal(formatScheduleRangeEnd(Date.parse("2026-08-12T22:59:00Z"), 1), "00:00")
+    assert.equal(formatScheduleRangeEnd(Date.parse("2026-08-12T22:00:00Z"), 60), "13/08, 00:00")
 })
