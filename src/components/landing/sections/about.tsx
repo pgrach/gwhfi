@@ -1,3 +1,5 @@
+import Image from "next/image"
+
 export function AboutSection() {
   return (
     <section id="about" className="border-t border-border px-6 py-24 md:py-32">
@@ -12,9 +14,11 @@ export function AboutSection() {
         <div className="mt-12 max-w-3xl rounded-lg border border-border bg-card p-8">
           <div className="flex flex-col gap-6 sm:flex-row">
             {/* Founder photo */}
-            <img
+            <Image
               src="/founder.jpg"
               alt="Pavel Grachev"
+              width={80}
+              height={80}
               className="h-20 w-20 shrink-0 rounded-full object-cover"
             />
             <div>

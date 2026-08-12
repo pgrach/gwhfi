@@ -1,11 +1,9 @@
 import { NextResponse } from "next/server"
 import { createClient, type SupabaseClient } from "@supabase/supabase-js"
 import { getUKDateBoundaries, getUKDateBoundariesForDate, getUKDateString } from "@/lib/date-utils"
+import { OCTOPUS_RATES_URL } from "@/lib/octopus-config"
 
-const PRODUCT = "AGILE-24-10-01"
-const REGION = "C"
-const TARIFF = `E-1R-${PRODUCT}-${REGION}`
-const OCTOPUS_BASE = `https://api.octopus.energy/v1/products/${PRODUCT}/electricity-tariffs/${TARIFF}/standard-unit-rates/`
+const OCTOPUS_BASE = OCTOPUS_RATES_URL
 
 interface RateApiResult {
     value_inc_vat: number

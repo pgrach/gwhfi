@@ -15,9 +15,11 @@ import {
     Legend,
     ResponsiveContainer,
     ReferenceArea,
-    ReferenceLine
+    ReferenceLine,
+    type DotItemDotProps,
 } from "recharts"
 import { getUKDateBoundaries, getUKDateBoundariesForDate, getUKDateString } from "@/lib/date-utils"
+import { OCTOPUS_RATES_URL } from "@/lib/octopus-config"
 
 interface Rate {
     value_inc_vat: number
@@ -32,6 +34,86 @@ interface ScheduleSlot {
     heater_type: string
 }
 
+interface DownsampledReading {
+    bucket_time: string
+    channel: number
+    avg_power: number | null
+}
+
+interface CounterReading {
+    device_id: string
+    energy_total_wh: number
+    created_at: string
+}
+
+interface CounterPoint {
+    deviceId: string
+    wattHours: number
+    timestampMs: number
+}
+
+interface ChartPoint {
+    timestamp: string
+    raw_time: number
+    rate: number | null
+    isScheduled: boolean
+    power_0: number | null
+    power_1: number | null
+}
+
+function asCounterPoint(reading: CounterReading | undefined): CounterPoint | null {
+    if (!reading) return null
+
+    const wattHours = Number(reading.energy_total_wh)
+    const timestampMs = Date.parse(reading.created_at)
+    if (!reading.device_id || !Number.isFinite(wattHours) || !Number.isFinite(timestampMs)) {
+        return null
+    }
+
+    return { deviceId: reading.device_id, wattHours, timestampMs }
+}
+
+function interpolateCounterAt(
+    beforeReading: CounterReading | undefined,
+    afterReading: CounterReading | undefined,
+    boundaryMs: number,
+): CounterPoint | null {
+    const before = asCounterPoint(beforeReading)
+    const after = asCounterPoint(afterReading)
+
+    if (before?.timestampMs === boundaryMs) return before
+    if (after?.timestampMs === boundaryMs) return after
+    if (!before || !after
+        || before.deviceId !== after.deviceId
+        || before.timestampMs >= after.timestampMs
+        || before.timestampMs > boundaryMs
+        || after.timestampMs < boundaryMs
+        || before.wattHours > after.wattHours) {
+        return null
+    }
+
+    const elapsedRatio = (boundaryMs - before.timestampMs) / (after.timestampMs - before.timestampMs)
+    return {
+        deviceId: before.deviceId,
+        wattHours: before.wattHours + ((after.wattHours - before.wattHours) * elapsedRatio),
+        timestampMs: boundaryMs,
+    }
+}
+
+function ScheduledDot({ cx, cy, payload }: DotItemDotProps) {
+    const point = payload as ChartPoint | undefined
+    if (typeof cx !== "number" || typeof cy !== "number" || !point?.isScheduled) {
+        return null
+    }
+
+    const minute = new Date(point.raw_time).getUTCMinutes()
+    if (minute % 30 !== 0) {
+        return null
+    }
+
+    return <circle cx={cx} cy={cy} r={4} fill="#10b981" stroke="#fff" strokeWidth={1} />
+}
+
 export function CombinedHistoryChart() {
     const router = useRouter()
     const pathname = usePathname()
@@ -39,7 +121,7 @@ export function CombinedHistoryChart() {
     const selectedDateParam = searchParams.get("selectedDate")
     const hasValidSelectedDateParam = !!selectedDateParam && /^\d{4}-\d{2}-\d{2}$/.test(selectedDateParam)
 
-    const [data, setData] = useState<any[]>([])
+    const [data, setData] = useState<ChartPoint[]>([])
     const [viewMode, setViewMode] = useState<"today" | "tomorrow" | "7d" | "30d" | "custom">(
         hasValidSelectedDateParam ? "custom" : "today"
     )
@@ -50,14 +132,14 @@ export function CombinedHistoryChart() {
         return getUKDateString(-1)
     })
     const [hasRates, setHasRates] = useState(true)
-    const [totals, setTotals] = useState({ peak: 0, offPeak: 0 })
+    const [totals, setTotals] = useState<{ peak: number | null; offPeak: number | null }>({
+        peak: null,
+        offPeak: null,
+    })
     const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
-    const [channelVisible, setChannelVisible] = useState({ peak: true, offPeak: true })
-
-    // Configuration for Octopus
-    const PRODUCT = "AGILE-24-10-01"
-    const REGION = "C" // London
-    const TARIFF = `E-1R-${PRODUCT}-${REGION}`
+    const [telemetryState, setTelemetryState] = useState<"loading" | "ok" | "empty" | "error">("loading")
+    const [nowMs, setNowMs] = useState(() => Date.now())
+    const [refreshKey, setRefreshKey] = useState(0)
 
     const isValidDateInputValue = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value)
 
@@ -74,7 +156,20 @@ export function CombinedHistoryChart() {
     }
 
     useEffect(() => {
+        const clockInterval = window.setInterval(() => setNowMs(Date.now()), 30_000)
+        const refreshInterval = window.setInterval(() => setRefreshKey((value) => value + 1), 5 * 60_000)
+
+        return () => {
+            window.clearInterval(clockInterval)
+            window.clearInterval(refreshInterval)
+        }
+    }, [])
+
+    useEffect(() => {
+        let cancelled = false
+
         const fetchData = async () => {
+            setTelemetryState("loading")
 
             // 1. Define Timeline Boundaries (always in UK time)
             let startDate: Date
@@ -89,7 +184,7 @@ export function CombinedHistoryChart() {
                 startDate = start
                 endDate = end
             } else if (viewMode === "7d") {
-                const { start } = getUKDateBoundaries(-7)
+                const { start } = getUKDateBoundaries(-6)
                 const { end } = getUKDateBoundaries(0)
                 startDate = start
                 endDate = end
@@ -107,7 +202,7 @@ export function CombinedHistoryChart() {
                 }
             } else {
                 // 30d
-                const { start } = getUKDateBoundaries(-30)
+                const { start } = getUKDateBoundaries(-29)
                 const { end } = getUKDateBoundaries(0)
                 startDate = start
                 endDate = end
@@ -118,16 +213,17 @@ export function CombinedHistoryChart() {
 
             // 2. Fetch Data
             let rates: Rate[] = []
-            let readings: any[] = []
+            let readings: DownsampledReading[] = []
             let scheduleSlots: ScheduleSlot[] = []
-            let channelHasEnergyMovement = new Map<number, boolean>([
-                [0, true],
-                [1, true],
+            let readingsFetchFailed = false
+            let channelTotals = new Map<number, number | null>([
+                [0, null],
+                [1, null],
             ])
 
             // Explicitly ensure we fetch enough future data if viewing tomorrow
             const ratesPromise = fetch(
-                `https://api.octopus.energy/v1/products/${PRODUCT}/electricity-tariffs/${TARIFF}/standard-unit-rates/?period_from=${startIso}&period_to=${endIso}&page_size=2000`
+                `${OCTOPUS_RATES_URL}?period_from=${startIso}&period_to=${endIso}&page_size=2000`
             ).then(r => r.json())
 
             // Define bucket size based on view mode
@@ -139,7 +235,7 @@ export function CombinedHistoryChart() {
 
             // Supabase PostgREST enforces a 1000-row server-side limit.
             // For 30d view (~1440 rows), split into two parallel 15-day chunks.
-            const readingsPromise: Promise<any[]> = (async () => {
+            const readingsPromise: Promise<DownsampledReading[]> = (async () => {
                 if (viewMode === "30d") {
                     const midTime = new Date((startDate.getTime() + endDate.getTime()) / 2)
                     const midIso = midTime.toISOString()
@@ -157,8 +253,14 @@ export function CombinedHistoryChart() {
                     ])
                     const data1 = firstHalf.data || []
                     const data2 = secondHalf.data || []
-                    if (firstHalf.error) console.error("Supabase Error (chunk 1):", firstHalf.error)
-                    if (secondHalf.error) console.error("Supabase Error (chunk 2):", secondHalf.error)
+                    if (firstHalf.error) {
+                        readingsFetchFailed = true
+                        console.error("Supabase Error (chunk 1):", firstHalf.error)
+                    }
+                    if (secondHalf.error) {
+                        readingsFetchFailed = true
+                        console.error("Supabase Error (chunk 2):", secondHalf.error)
+                    }
                     return [...data1, ...data2]
                 } else {
                     const res = await supabase.rpc('get_downsampled_readings', {
@@ -166,7 +268,10 @@ export function CombinedHistoryChart() {
                         end_time: endIso,
                         bucket_seconds: bucketMinutes * 60
                     })
-                    if (res.error) console.error("Supabase Error:", res.error)
+                    if (res.error) {
+                        readingsFetchFailed = true
+                        console.error("Supabase Error:", res.error)
+                    }
                     return res.data || []
                 }
             })()
@@ -176,15 +281,25 @@ export function CombinedHistoryChart() {
                 .from('heating_schedule')
                 .select('*')
                 .eq('heater_type', 'off_peak')
-                .gte('slot_start', startIso)
-                .lte('slot_end', endIso)
+                .lte('slot_start', endIso)
+                .gt('slot_end', startIso)
                 .order('slot_start', { ascending: true })
 
-            const channelMovementPromise = Promise.all([0, 1].map(async (channel) => {
-                const [firstRes, lastRes] = await Promise.all([
+            // Cumulative meter counters are the source of truth for energy usage.
+            // Average power is useful for the chart, but summing fixed-size buckets
+            // overstates usage when telemetry is missing or irregular.
+            const channelTotalsPromise = Promise.all([0, 1].map(async (channel) => {
+                const [beforeStartRes, afterStartRes, beforeEndRes, afterEndRes] = await Promise.all([
                     supabase
                         .from('energy_readings')
-                        .select('energy_total_wh, created_at')
+                        .select('device_id, energy_total_wh, created_at')
+                        .eq('channel', channel)
+                        .lte('created_at', startIso)
+                        .order('created_at', { ascending: false })
+                        .limit(1),
+                    supabase
+                        .from('energy_readings')
+                        .select('device_id, energy_total_wh, created_at')
                         .eq('channel', channel)
                         .gte('created_at', startIso)
                         .lte('created_at', endIso)
@@ -192,25 +307,55 @@ export function CombinedHistoryChart() {
                         .limit(1),
                     supabase
                         .from('energy_readings')
-                        .select('energy_total_wh, created_at')
+                        .select('device_id, energy_total_wh, created_at')
                         .eq('channel', channel)
                         .gte('created_at', startIso)
                         .lte('created_at', endIso)
                         .order('created_at', { ascending: false })
                         .limit(1),
+                    supabase
+                        .from('energy_readings')
+                        .select('device_id, energy_total_wh, created_at')
+                        .eq('channel', channel)
+                        .gte('created_at', endIso)
+                        .order('created_at', { ascending: true })
+                        .limit(1),
                 ])
 
-                if (firstRes.error || lastRes.error || !firstRes.data?.[0] || !lastRes.data?.[0]) {
-                    return { channel, hasMovement: true }
+                if (beforeStartRes.error || afterStartRes.error || beforeEndRes.error || afterEndRes.error) {
+                    return { channel, totalKWh: null }
                 }
 
-                const firstWh = Number(firstRes.data[0].energy_total_wh ?? 0)
-                const lastWh = Number(lastRes.data[0].energy_total_wh ?? 0)
-                return { channel, hasMovement: Math.abs(lastWh - firstWh) > 0.1 }
+                const startCounter = interpolateCounterAt(
+                    beforeStartRes.data?.[0] as CounterReading | undefined,
+                    afterStartRes.data?.[0] as CounterReading | undefined,
+                    startDate.getTime(),
+                )
+                const interpolatedEndCounter = interpolateCounterAt(
+                    beforeEndRes.data?.[0] as CounterReading | undefined,
+                    afterEndRes.data?.[0] as CounterReading | undefined,
+                    endDate.getTime(),
+                )
+                const lastInRange = asCounterPoint(beforeEndRes.data?.[0] as CounterReading | undefined)
+                const isCurrentOrFutureRange = endDate.getTime() >= Date.now()
+                const endCounter = interpolatedEndCounter ?? (isCurrentOrFutureRange ? lastInRange : null)
+
+                const isValidDelta = startCounter !== null
+                    && endCounter !== null
+                    && startCounter.deviceId === endCounter.deviceId
+                    && endCounter.timestampMs > startCounter.timestampMs
+                    && endCounter.wattHours >= startCounter.wattHours
+
+                return {
+                    channel,
+                    totalKWh: isValidDelta ? (endCounter.wattHours - startCounter.wattHours) / 1000 : null,
+                }
             }))
 
             try {
-                const [rData, readingsData, schedData, movementData] = await Promise.all([ratesPromise, readingsPromise, schedulePromise, channelMovementPromise])
+                const [rData, readingsData, schedData, totalsData] = await Promise.all([ratesPromise, readingsPromise, schedulePromise, channelTotalsPromise])
+                if (cancelled) return
+
                 if (rData.results) {
                     rates = rData.results
                     if (rates.length === 0 && viewMode === "tomorrow") {
@@ -221,6 +366,7 @@ export function CombinedHistoryChart() {
                 }
 
                 readings = readingsData
+                setTelemetryState(readingsFetchFailed ? "error" : readings.length > 0 ? "ok" : "empty")
 
                 if (schedData.data) {
                     scheduleSlots = schedData.data
@@ -228,14 +374,12 @@ export function CombinedHistoryChart() {
                     console.error("Schedule fetch error:", schedData.error)
                 }
 
-                channelHasEnergyMovement = new Map<number, boolean>(movementData.map((m) => [m.channel, m.hasMovement]))
-                setChannelVisible({
-                    peak: !!channelHasEnergyMovement.get(0),
-                    offPeak: !!channelHasEnergyMovement.get(1),
-                })
+                channelTotals = new Map<number, number | null>(totalsData.map((result) => [result.channel, result.totalKWh]))
             } catch (e) {
+                if (cancelled) return
                 console.error("Fetch error", e)
                 setHasRates(false)
+                setTelemetryState("error")
             }
 
             // Track last update time from most recent reading
@@ -246,55 +390,24 @@ export function CombinedHistoryChart() {
                     return currentTime > latestTime ? current : latest
                 })
                 setLastUpdate(new Date(latestReading.bucket_time))
+            } else {
+                setLastUpdate(null)
             }
 
             // --- Calculate Totals (kWh) ---
-            // For long view, we can sum the avg_power * hours? 
-            // Or just keep the total calculation roughly same?
-            // Actually, for accurate totals, we might want a separate RPC or just accept approximation.
-            // But the user cares about the graph mainly.
-            // Let's mock totals for now if RPC, or calculate from averages (avg power W * hours = Wh).
-
-            const calculateKWh = (channelId: number) => {
-                // Always using RPC now, calculate from avg_power
-                const channelReadings = readings.filter(r => r.channel === channelId)
-                const hours = bucketMinutes / 60
-                const totalWh = channelReadings.reduce((sum, r) => sum + ((r.avg_power || 0) * hours), 0)
-                return totalWh / 1000
-            }
-
             setTotals({
-                peak: calculateKWh(0),
-                offPeak: calculateKWh(1)
+                peak: channelTotals.get(0) ?? null,
+                offPeak: channelTotals.get(1) ?? null,
             })
             // -----------------------------
 
-            // --- Build Schedule Map for "Scheduled Heating" visualization ---
-            // Create a Set of timestamps where heating is scheduled
-            // This replaces the old "below average" logic with actual scheduled slots
-            const scheduledMap = new Map<number, boolean>()
-
-            scheduleSlots.forEach(slot => {
-                const slotStart = new Date(slot.slot_start).getTime()
-                const slotEnd = new Date(slot.slot_end).getTime()
-
-                // Mark every 30-min boundary within this slot as scheduled
-                let t = slotStart
-                while (t < slotEnd) {
-                    scheduledMap.set(t, true)
-                    t += 30 * 60 * 1000 // 30 minutes in ms
-                }
-            })
-            // -------------------------------------------------
-
-
             // 3. Build Unified Buckets (Dynamic Granularity)
 
-            const buckets = []
+            const buckets: ChartPoint[] = []
             const currentCursor = new Date(startDate)
 
             // Map for quick lookup
-            const readingsBySlot = new Map<number, any[]>()
+            const readingsBySlot = new Map<number, DownsampledReading[]>()
             readings.forEach(r => {
                 // Always using RPC now, so always use bucket_time
                 const t = new Date(r.bucket_time)
@@ -328,30 +441,25 @@ export function CombinedHistoryChart() {
                     return slotTime >= from && slotTime < to
                 })
 
-                // Determine if this slot is scheduled for heating
-                // Align to 30-min boundary to match schedule slots
-                const alignedTime = Math.floor(slotTime / (30 * 60 * 1000)) * (30 * 60 * 1000)
-                const isScheduled = scheduledMap.has(alignedTime)
+                // A long-view bucket can contain a schedule beginning at :30,
+                // so use interval overlap instead of testing only its start.
+                const bucketEndTime = slotTime + (bucketMinutes * 60 * 1000)
+                const isScheduled = scheduleSlots.some((slot) => {
+                    const scheduledStart = Date.parse(slot.slot_start)
+                    const scheduledEnd = Date.parse(slot.slot_end)
+                    return scheduledStart < bucketEndTime && scheduledEnd > slotTime
+                })
 
                 const slotReadings = readingsBySlot.get(slotTime) || []
 
-                // No reading in this bucket = heater is off (0W)
-                const defaultPower = 0
-                let avg0 = defaultPower
-                let avg1 = defaultPower
-
-                // Always using RPC now, so always use avg_power
+                // Missing telemetry is unknown, not a measured 0W sample. Recharts
+                // renders nulls as gaps while preserving explicit zero readings.
                 const r0 = slotReadings.find(r => r.channel === 0)
                 const r1 = slotReadings.find(r => r.channel === 1)
-                avg0 = r0 ? r0.avg_power : defaultPower
-                avg1 = r1 ? r1.avg_power : defaultPower
-
-                if (!channelHasEnergyMovement.get(0)) {
-                    avg0 = 0
-                }
-                if (!channelHasEnergyMovement.get(1)) {
-                    avg1 = 0
-                }
+                const power0 = r0?.avg_power == null ? null : Number(r0.avg_power)
+                const power1 = r1?.avg_power == null ? null : Number(r1.avg_power)
+                const avg0 = power0 !== null && Number.isFinite(power0) ? power0 : null
+                const avg1 = power1 !== null && Number.isFinite(power1) ? power1 : null
 
                 buckets.push({
                     timestamp,
@@ -368,16 +476,18 @@ export function CombinedHistoryChart() {
             setData(buckets)
         }
 
-        fetchData()
-    }, [viewMode, customDate])
+        void fetchData()
+        return () => {
+            cancelled = true
+        }
+    }, [viewMode, customDate, refreshKey])
 
-    // Identify "off" periods for shading (both heaters at 0W or null)
+    // Identify measured "off" periods. Unknown telemetry must remain unshaded.
     const offPeriods: Array<{ start: string; end: string }> = []
     let offStart: string | null = null
 
     data.forEach((point, idx) => {
-        const isBothOff = (point.power_0 === null || point.power_0 === 0) &&
-            (point.power_1 === null || point.power_1 === 0)
+        const isBothOff = point.power_0 === 0 && point.power_1 === 0
 
         if (isBothOff && offStart === null) {
             // Start of off period
@@ -394,22 +504,6 @@ export function CombinedHistoryChart() {
         offPeriods.push({ start: offStart, end: data[data.length - 1].timestamp })
     }
 
-    // Custom Dot for Scheduled Heating Slots (Only show every 30 mins to avoid clutter)
-    const ScheduledDot = (props: any) => {
-        const { cx, cy, payload } = props;
-        if (payload && payload.isScheduled) {
-            // Check if on 30-min boundary (use UTC to avoid timezone issues)
-            const date = new Date(payload.raw_time)
-            const min = date.getUTCMinutes()
-            if (min % 30 === 0) {
-                return (
-                    <circle cx={cx} cy={cy} r={4} fill="#10b981" stroke="#fff" strokeWidth={1} />
-                );
-            }
-        }
-        return null;
-    };
-
     // Check for missing Tomorrow data
     // We check hasRates because 'data' might be populated with empty buckets
     if (viewMode === "tomorrow" && !hasRates) {
@@ -424,7 +518,7 @@ export function CombinedHistoryChart() {
                             Back to Today
                         </Button>
                         <p className="text-muted-foreground">
-                            Tomorrow's rates are not yet available from Octopus Energy. <br />
+                            Tomorrow&apos;s rates are not yet available from Octopus Energy. <br />
                             Please check back after 4:00 PM.
                         </p>
                     </div>
@@ -436,7 +530,7 @@ export function CombinedHistoryChart() {
     // Helper to format time ago
     const formatTimeAgo = (date: Date | null) => {
         if (!date) return "Never"
-        const seconds = Math.floor((new Date().getTime() - date.getTime()) / 1000)
+        const seconds = Math.max(0, Math.floor((nowMs - date.getTime()) / 1000))
         if (seconds < 60) return `${seconds}s ago`
         const minutes = Math.floor(seconds / 60)
         if (minutes < 60) return `${minutes}m ago`
@@ -445,10 +539,10 @@ export function CombinedHistoryChart() {
         return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     }
 
-    const systemStatus = lastUpdate && (new Date().getTime() - lastUpdate.getTime()) < 120000 ? "active" : "stale"
+    const systemStatus = lastUpdate && (nowMs - lastUpdate.getTime()) < 120000 ? "active" : "stale"
 
     // Find current time position for vertical highlight
-    const now = new Date()
+    const now = new Date(nowMs)
     let currentTimestamp = null
 
     if (data.length > 0) {
@@ -491,14 +585,27 @@ export function CombinedHistoryChart() {
                                 <span>Updated {formatTimeAgo(lastUpdate)}</span>
                             </div>
                         )}
+                        {!lastUpdate && telemetryState !== "loading" && (
+                            <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${telemetryState === "error"
+                                ? "bg-red-500/10 text-red-600 border-red-500/20"
+                                : "bg-amber-500/10 text-amber-600 border-amber-500/20"
+                                }`}>
+                                <div className={`w-1.5 h-1.5 rounded-full ${telemetryState === "error" ? "bg-red-500" : "bg-amber-500"}`} />
+                                <span>{telemetryState === "error" ? "Telemetry unavailable" : "No telemetry in range"}</span>
+                            </div>
+                        )}
                     </div>
                     <CardDescription className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-0">
                         <span>Total heater usage in selected range:</span>
                         <span className="hidden sm:inline text-muted-foreground mx-2">|</span>
                         <div className="flex gap-4 sm:gap-0">
-                            <span className="text-blue-500 font-bold whitespace-nowrap">Boost: {totals.peak.toFixed(2)} kWh</span>
+                            <span className="text-blue-500 font-bold whitespace-nowrap">
+                                Boost: {totals.peak === null ? "—" : `${totals.peak.toFixed(2)} kWh`}
+                            </span>
                             <span className="hidden sm:inline text-muted-foreground mx-2">|</span>
-                            <span className="text-green-600 font-bold whitespace-nowrap">Storage: {totals.offPeak.toFixed(2)} kWh</span>
+                            <span className="text-green-600 font-bold whitespace-nowrap">
+                                Storage: {totals.offPeak === null ? "—" : `${totals.offPeak.toFixed(2)} kWh`}
+                            </span>
                         </div>
                     </CardDescription>
                 </div>
@@ -522,7 +629,9 @@ export function CombinedHistoryChart() {
                     <input
                         type="date"
                         max={getUKDateString(-1)}
-                        value={customDate}
+                        value={viewMode === "custom" ? customDate : ""}
+                        aria-label="Choose a historical date"
+                        title={viewMode === "custom" ? "Selected historical date" : "Choose a historical date"}
                         onChange={(e) => {
                             if (isValidDateInputValue(e.target.value)) {
                                 setCustomDate(e.target.value)
@@ -609,13 +718,13 @@ export function CombinedHistoryChart() {
 
                             <Tooltip
                                 contentStyle={{ backgroundColor: "#1f2937", border: "none", color: "#fff" }}
-                                formatter={(value: any, name: any, props: any) => {
+                                formatter={(value, name, props) => {
                                     if (name === "Rate (p/kWh)") {
-                                        const isScheduled = props.payload.isScheduled
+                                        const point = props.payload as ChartPoint | undefined
                                         return [
                                             <div key="rate">
                                                 <span>{Number(value).toFixed(2)}p</span>
-                                                {isScheduled && <span className="ml-2 text-green-400 font-bold">● Heating</span>}
+                                                {point?.isScheduled && <span className="ml-2 text-green-400 font-bold">● Scheduled</span>}
                                             </div>,
                                             name
                                         ]
@@ -633,7 +742,7 @@ export function CombinedHistoryChart() {
                                 name="Rate (p/kWh)"
                                 stroke="#f050f8"
                                 strokeWidth={2}
-                                dot={<ScheduledDot />}
+                                dot={ScheduledDot}
                                 connectNulls
                             />
 
@@ -646,7 +755,6 @@ export function CombinedHistoryChart() {
                                 stroke="#2563eb"
                                 strokeWidth={2}
                                 dot={false}
-                                hide={!channelVisible.peak}
                             />
                             <Line
                                 yAxisId="right"
@@ -656,7 +764,6 @@ export function CombinedHistoryChart() {
                                 stroke="#16a34a"
                                 strokeWidth={2}
                                 dot={false}
-                                hide={!channelVisible.offPeak}
                             />
                         </LineChart>
                     </ResponsiveContainer>

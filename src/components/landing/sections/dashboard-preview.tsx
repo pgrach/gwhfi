@@ -1,4 +1,4 @@
-import { Activity, Wifi, WifiOff, Thermometer, Zap, BarChart3, ExternalLink } from "lucide-react";
+import { Activity, Wifi, WifiOff, Thermometer, BarChart3, ExternalLink } from "lucide-react";
 
 export function DashboardPreviewSection() {
   return (

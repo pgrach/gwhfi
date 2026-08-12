@@ -1,7 +1,12 @@
 # Secrets
 .env
 .env.local
+.env.*
+!.env.example
 tinytuya.json
+
+# Machine-local assistant settings
+.claude/settings.local.json
 # Python
 __pycache__/
 *.py[cod]

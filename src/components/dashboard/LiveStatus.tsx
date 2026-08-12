@@ -15,14 +15,67 @@ interface Reading {
     created_at: string
 }
 
-// Separate components for each heater type to avoid dynamic class issues
-function PeakHeaterCard({ power, voltage, energy, isOn, maxPower }: {
-    power: number
-    voltage: number
-    energy: number
+type ChannelStatus = "loading" | "online" | "stale" | "error" | "unavailable"
+
+interface HeaterCardProps {
+    power: number | null
+    voltage: number | null
+    energy: number | null
     isOn: boolean
     maxPower: number
-}) {
+    status: ChannelStatus
+    readingAge: string
+}
+
+// The worker emits an idle heartbeat just after 15 minutes. Allow one polling
+// interval of headroom so a healthy, idle meter does not briefly flap stale.
+const STALE_AFTER_MS = 20 * 60 * 1000
+
+function getChannelStatus(
+    reading: Reading | undefined,
+    error: string | null,
+    loading: boolean,
+    nowMs: number,
+): ChannelStatus {
+    if (error) return "error"
+    if (!reading) return loading ? "loading" : "unavailable"
+
+    const timestamp = Date.parse(reading.created_at)
+    if (!Number.isFinite(timestamp)) return "unavailable"
+
+    const ageMs = nowMs - timestamp
+    return ageMs >= -60_000 && ageMs < STALE_AFTER_MS ? "online" : "stale"
+}
+
+function formatReadingAge(reading: Reading | undefined, nowMs: number) {
+    if (!reading) return "No reading received"
+    const timestamp = Date.parse(reading.created_at)
+    if (!Number.isFinite(timestamp)) return "Reading time unavailable"
+
+    const minutes = Math.max(0, Math.floor((nowMs - timestamp) / 60_000))
+    if (minutes === 0) return "Updated just now"
+    if (minutes === 1) return "Updated 1 min ago"
+    return `Updated ${minutes} mins ago`
+}
+
+function ChannelStatusBadge({ status }: { status: ChannelStatus }) {
+    if (status === "online") {
+        return <Badge variant="secondary" className="text-xs">OFF</Badge>
+    }
+    if (status === "loading") {
+        return <Badge variant="outline" className="text-xs">CHECKING</Badge>
+    }
+    if (status === "stale") {
+        return <Badge variant="outline" className="border-amber-500 text-amber-600 text-xs">STALE</Badge>
+    }
+    if (status === "error") {
+        return <Badge variant="destructive" className="text-xs">DATA ERROR</Badge>
+    }
+    return <Badge variant="destructive" className="text-xs">NO DATA</Badge>
+}
+
+// Separate components for each heater type to avoid dynamic class issues
+function PeakHeaterCard({ power, voltage, energy, isOn, maxPower, status, readingAge }: HeaterCardProps) {
     return (
         <Card className={`relative overflow-hidden transition-all duration-500 ${isOn ? "ring-2 ring-blue-500 shadow-lg shadow-blue-500/20" : ""
             }`}>
@@ -38,9 +91,7 @@ function PeakHeaterCard({ power, voltage, energy, isOn, maxPower }: {
                             <Flame className="w-3 h-3 mr-1" />
                             ON
                         </Badge>
-                    ) : (
-                        <Badge variant="secondary" className="text-xs">OFF</Badge>
-                    )}
+                    ) : <ChannelStatusBadge status={status} />}
                 </div>
                 <div className={`p-2 rounded-lg ${isOn ? "bg-blue-500 text-white" : "bg-muted"}`}>
                     <Zap className="h-4 w-4" />
@@ -50,7 +101,7 @@ function PeakHeaterCard({ power, voltage, energy, isOn, maxPower }: {
             <CardContent className="relative">
                 <div className="flex items-end gap-2">
                     <span className={`text-3xl font-bold tabular-nums ${isOn ? "text-blue-500" : ""}`}>
-                        {power.toFixed(0)}
+                        {power === null ? "—" : power.toFixed(0)}
                     </span>
                     <span className="text-lg text-muted-foreground mb-1">W</span>
                 </div>
@@ -59,25 +110,20 @@ function PeakHeaterCard({ power, voltage, energy, isOn, maxPower }: {
                     <div
                         className={`h-full rounded-full transition-all duration-500 ${isOn ? "bg-gradient-to-r from-blue-400 to-blue-600" : "bg-muted-foreground/30"
                             }`}
-                        style={{ width: `${Math.min((power / maxPower) * 100, 100)}%` }}
+                        style={{ width: `${power === null ? 0 : Math.min((power / maxPower) * 100, 100)}%` }}
                     />
                 </div>
 
                 <p className="text-xs text-muted-foreground mt-2">
-                    {voltage.toFixed(1)}V • {(energy / 1000).toFixed(1)} kWh total
+                    {voltage === null ? "—" : `${voltage.toFixed(1)}V`} • {energy === null ? "—" : `${(energy / 1000).toFixed(1)} kWh total`}
                 </p>
+                <p className="text-xs text-muted-foreground mt-1">{status === "error" ? "Latest telemetry request failed" : readingAge}</p>
             </CardContent>
         </Card>
     )
 }
 
-function OffPeakHeaterCard({ power, voltage, energy, isOn, maxPower }: {
-    power: number
-    voltage: number
-    energy: number
-    isOn: boolean
-    maxPower: number
-}) {
+function OffPeakHeaterCard({ power, voltage, energy, isOn, maxPower, status, readingAge }: HeaterCardProps) {
     return (
         <Card className={`relative overflow-hidden transition-all duration-500 ${isOn ? "ring-2 ring-green-500 shadow-lg shadow-green-500/20" : ""
             }`}>
@@ -93,9 +139,7 @@ function OffPeakHeaterCard({ power, voltage, energy, isOn, maxPower }: {
                             <Flame className="w-3 h-3 mr-1" />
                             ON
                         </Badge>
-                    ) : (
-                        <Badge variant="secondary" className="text-xs">OFF</Badge>
-                    )}
+                    ) : <ChannelStatusBadge status={status} />}
                 </div>
                 <div className={`p-2 rounded-lg ${isOn ? "bg-green-500 text-white" : "bg-muted"}`}>
                     <Activity className="h-4 w-4" />
@@ -105,7 +149,7 @@ function OffPeakHeaterCard({ power, voltage, energy, isOn, maxPower }: {
             <CardContent className="relative">
                 <div className="flex items-end gap-2">
                     <span className={`text-3xl font-bold tabular-nums ${isOn ? "text-green-500" : ""}`}>
-                        {power.toFixed(0)}
+                        {power === null ? "—" : power.toFixed(0)}
                     </span>
                     <span className="text-lg text-muted-foreground mb-1">W</span>
                 </div>
@@ -114,78 +158,89 @@ function OffPeakHeaterCard({ power, voltage, energy, isOn, maxPower }: {
                     <div
                         className={`h-full rounded-full transition-all duration-500 ${isOn ? "bg-gradient-to-r from-green-400 to-green-600" : "bg-muted-foreground/30"
                             }`}
-                        style={{ width: `${Math.min((power / maxPower) * 100, 100)}%` }}
+                        style={{ width: `${power === null ? 0 : Math.min((power / maxPower) * 100, 100)}%` }}
                     />
                 </div>
 
                 <p className="text-xs text-muted-foreground mt-2">
-                    {voltage.toFixed(1)}V • {(energy / 1000).toFixed(1)} kWh total
+                    {voltage === null ? "—" : `${voltage.toFixed(1)}V`} • {energy === null ? "—" : `${(energy / 1000).toFixed(1)} kWh total`}
                 </p>
+                <p className="text-xs text-muted-foreground mt-1">{status === "error" ? "Latest telemetry request failed" : readingAge}</p>
             </CardContent>
         </Card>
     )
 }
 
 export function LiveStatus() {
-    const [readings, setReadings] = useState<Reading[]>([])
+    const [readings, setReadings] = useState<Partial<Record<0 | 1, Reading>>>({})
     const [loading, setLoading] = useState(true)
-    const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
-
-    const fetchLive = async () => {
-        // Fetch latest reading for each channel separately
-        const [channel0Response, channel1Response] = await Promise.all([
-            supabase
-                .from("energy_readings")
-                .select("*")
-                .eq("channel", 0)
-                .order("created_at", { ascending: false })
-                .limit(1),
-            supabase
-                .from("energy_readings")
-                .select("*")
-                .eq("channel", 1)
-                .order("created_at", { ascending: false })
-                .limit(1)
-        ])
-
-        const combinedData = [
-            ...(channel0Response.data || []),
-            ...(channel1Response.data || [])
-        ]
-
-        if (combinedData.length > 0) {
-            setReadings(combinedData)
-            // Use the most recent timestamp from either channel
-            const latestTimestamp = Math.max(
-                ...combinedData.map(r => new Date(r.created_at).getTime())
-            )
-            setLastUpdated(new Date(latestTimestamp))
-        }
-        setLoading(false)
-    }
+    const [errors, setErrors] = useState<Record<0 | 1, string | null>>({ 0: null, 1: null })
+    const [nowMs, setNowMs] = useState(() => Date.now())
 
     useEffect(() => {
-        fetchLive()
-        const interval = setInterval(fetchLive, 5000)
-        return () => clearInterval(interval)
+        let cancelled = false
+
+        const fetchLive = async () => {
+            try {
+                const [channel0Response, channel1Response] = await Promise.all([
+                    supabase
+                        .from("energy_readings")
+                        .select("*")
+                        .eq("channel", 0)
+                        .order("created_at", { ascending: false })
+                        .limit(1),
+                    supabase
+                        .from("energy_readings")
+                        .select("*")
+                        .eq("channel", 1)
+                        .order("created_at", { ascending: false })
+                        .limit(1),
+                ])
+
+                if (cancelled) return
+
+                setReadings((previous) => ({
+                    0: channel0Response.error ? previous[0] : channel0Response.data?.[0],
+                    1: channel1Response.error ? previous[1] : channel1Response.data?.[0],
+                }))
+                setErrors({
+                    0: channel0Response.error?.message ?? null,
+                    1: channel1Response.error?.message ?? null,
+                })
+            } catch (error) {
+                if (cancelled) return
+                const message = error instanceof Error ? error.message : "Telemetry request failed"
+                setErrors({ 0: message, 1: message })
+            } finally {
+                if (!cancelled) {
+                    setNowMs(Date.now())
+                    setLoading(false)
+                }
+            }
+        }
+
+        void fetchLive()
+        const pollInterval = window.setInterval(() => void fetchLive(), 30_000)
+        const clockInterval = window.setInterval(() => setNowMs(Date.now()), 10_000)
+        return () => {
+            cancelled = true
+            window.clearInterval(pollInterval)
+            window.clearInterval(clockInterval)
+        }
     }, [])
 
-    const main = readings.find(r => r.channel === 0)
-    const second = readings.find(r => r.channel === 1)
-
-    // Data ingestion runs every 10 minutes via GitHub Actions
-    // Show offline if no data for 15 minutes (10 min schedule + 5 min buffer)
-    const isOnline = lastUpdated && (new Date().getTime() - lastUpdated.getTime()) < 15 * 60 * 1000
-
-    // Calculate minutes since last update for display
-    const minutesSinceUpdate = lastUpdated
-        ? Math.floor((new Date().getTime() - lastUpdated.getTime()) / 60000)
-        : null
+    const main = readings[0]
+    const second = readings[1]
+    const peakStatus = getChannelStatus(main, errors[0], loading, nowMs)
+    const offPeakStatus = getChannelStatus(second, errors[1], loading, nowMs)
+    const peakIsFresh = peakStatus === "online"
+    const offPeakIsFresh = offPeakStatus === "online"
+    const freshChannelCount = Number(peakIsFresh) + Number(offPeakIsFresh)
 
     // Determine if heaters are ON (power > 100W threshold)
-    // FORCE OFF if system is offline (stale data > 15 mins)
-    const isPeakOn = (isOnline ?? false) && (main?.power_w ?? 0) > 100
-    const isOffPeakOn = (isOnline ?? false) && (second?.power_w ?? 0) > 100
+    // Each channel must have its own fresh, successful reading.
+    const isPeakOn = peakIsFresh && (main?.power_w ?? 0) > 100
+    const isOffPeakOn = offPeakIsFresh && (second?.power_w ?? 0) > 100
 
     // Max power for progress bar (3kW heaters)
     const MAX_POWER = 3200
@@ -196,38 +251,33 @@ export function LiveStatus() {
                 <h2 className="text-2xl font-bold tracking-tight">Heater Status (Live)</h2>
                 <div className="flex items-center space-x-2 w-full sm:w-auto justify-between sm:justify-end">
                     <Badge
-                        variant={isOnline ? "default" : "destructive"}
-                        className={isOnline ? "bg-green-500 hover:bg-green-600" : ""}
+                        variant={freshChannelCount === 2 ? "default" : "destructive"}
+                        className={freshChannelCount === 2 ? "bg-green-500 hover:bg-green-600" : ""}
                     >
-                        <span className={`w-2 h-2 rounded-full mr-2 ${isOnline ? "bg-white animate-pulse" : "bg-red-200"}`} />
-                        {isOnline ? "System Online" : "Offline"}
+                        <span className={`w-2 h-2 rounded-full mr-2 ${freshChannelCount === 2 ? "bg-white animate-pulse" : "bg-red-200"}`} />
+                        {freshChannelCount}/2 channels fresh
                     </Badge>
-                    {lastUpdated && (
-                        <span className="text-sm text-muted-foreground">
-                            {minutesSinceUpdate === 0
-                                ? "Updated just now"
-                                : minutesSinceUpdate === 1
-                                    ? "1 min ago"
-                                    : `${minutesSinceUpdate} mins ago`}
-                        </span>
-                    )}
                 </div>
             </div>
 
             <div className="grid gap-4 md:grid-cols-2">
                 <PeakHeaterCard
-                    power={(isOnline ?? false) ? (main?.power_w ?? 0) : 0}
-                    voltage={main?.voltage ?? 0}
-                    energy={main?.energy_total_wh ?? 0}
+                    power={peakIsFresh ? (main?.power_w ?? 0) : null}
+                    voltage={peakIsFresh ? (main?.voltage ?? 0) : null}
+                    energy={peakIsFresh ? (main?.energy_total_wh ?? 0) : null}
                     isOn={isPeakOn}
                     maxPower={MAX_POWER}
+                    status={peakStatus}
+                    readingAge={formatReadingAge(main, nowMs)}
                 />
                 <OffPeakHeaterCard
-                    power={(isOnline ?? false) ? (second?.power_w ?? 0) : 0}
-                    voltage={second?.voltage ?? 0}
-                    energy={second?.energy_total_wh ?? 0}
+                    power={offPeakIsFresh ? (second?.power_w ?? 0) : null}
+                    voltage={offPeakIsFresh ? (second?.voltage ?? 0) : null}
+                    energy={offPeakIsFresh ? (second?.energy_total_wh ?? 0) : null}
                     isOn={isOffPeakOn}
                     maxPower={MAX_POWER}
+                    status={offPeakStatus}
+                    readingAge={formatReadingAge(second, nowMs)}
                 />
             </div>
         </div>

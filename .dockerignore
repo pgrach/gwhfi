@@ -1,0 +1,22 @@
+.git
+.github
+.claude
+
+# Local dependencies and build output
+node_modules
+.next
+out
+build
+.venv
+venv
+env
+**/__pycache__
+**/*.py[cod]
+*.log
+
+# Never send local configuration or generated analysis output to the builder
+.env
+.env.*
+!.env.example
+analysis/output
+analysis/output_from_start

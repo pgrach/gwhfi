@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge"
 import { Zap, TrendingDown, Clock } from "lucide-react"
 import { supabase } from "@/lib/supabase"
 import { getUKDateBoundaries } from "@/lib/date-utils"
+import { OCTOPUS_RATES_URL } from "@/lib/octopus-config"
 
 interface Rate {
     value_inc_vat: number
@@ -19,10 +20,6 @@ export function CurrentRate() {
     const [nextSmartSlot, setNextSmartSlot] = useState<string | null>(null)
     const [loading, setLoading] = useState(true)
 
-    const PRODUCT = "AGILE-24-10-01"
-    const REGION = "C"
-    const TARIFF = `E-1R-${PRODUCT}-${REGION}`
-
     useEffect(() => {
         const fetchRates = async () => {
             try {
@@ -31,7 +28,7 @@ export function CurrentRate() {
 
                 const [response, scheduleResponse] = await Promise.all([
                     fetch(
-                        `https://api.octopus.energy/v1/products/${PRODUCT}/electricity-tariffs/${TARIFF}/standard-unit-rates/?period_from=${startOfDay.toISOString()}&period_to=${endOfDay.toISOString()}`
+                        `${OCTOPUS_RATES_URL}?period_from=${startOfDay.toISOString()}&period_to=${endOfDay.toISOString()}`
                     ),
                     supabase
                         .from('heating_schedule')

@@ -19,16 +19,29 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     const [mounted, setMounted] = useState(false)
 
     useEffect(() => {
-        setMounted(true)
-        // Check localStorage or system preference
-        const stored = localStorage.getItem("smartwater-theme") as Theme
-        if (stored) {
-            setTheme(stored)
-        } else if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
-            setTheme("dark")
-        } else {
-            setTheme("light")
-        }
+        // Defer the browser-only preference lookup until after hydration. This
+        // keeps the server and first client render identical without performing
+        // a synchronous state update inside the effect itself.
+        const frame = window.requestAnimationFrame(() => {
+            let initialTheme: Theme = "dark"
+            try {
+                const stored = localStorage.getItem("smartwater-theme")
+                initialTheme = stored === "light" || stored === "dark"
+                    ? stored
+                    : window.matchMedia("(prefers-color-scheme: dark)").matches
+                        ? "dark"
+                        : "light"
+            } catch {
+                // Keep the safe default when browser preference APIs are blocked.
+            } finally {
+                // Private browsing or hardened browser settings may make
+                // localStorage throw. The dashboard must still finish mounting.
+                setTheme(initialTheme)
+                setMounted(true)
+            }
+        })
+
+        return () => window.cancelAnimationFrame(frame)
     }, [])
 
     useEffect(() => {
@@ -40,7 +53,11 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
         } else {
             root.classList.remove("dark")
         }
-        localStorage.setItem("smartwater-theme", theme)
+        try {
+            localStorage.setItem("smartwater-theme", theme)
+        } catch {
+            // The DOM theme remains usable even when persistence is unavailable.
+        }
     }, [theme, mounted])
 
     const toggleTheme = () => {

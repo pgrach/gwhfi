@@ -63,5 +63,46 @@ class SmartSchedulerTimezoneTests(unittest.TestCase):
         self.assertIn(after_midnight_local, selected)
 
 
+class SmartSchedulerBudgetSemanticsTests(unittest.TestCase):
+    def setUp(self):
+        self.scheduler = SmartScheduler(SchedulerConfig)
+        # UTC instants corresponding to the scheduler's three fixed London
+        # windows on 2026-08-11 (BST = UTC+1).
+        self.fixed_window_rates = [
+            rate("2026-08-10T23:00:00"),  # 00:00 local
+            rate("2026-08-10T23:30:00"),  # 00:30 local
+            rate("2026-08-11T00:00:00"),  # 01:00 local
+            rate("2026-08-11T00:30:00"),  # 01:30 local
+            rate("2026-08-11T13:00:00"),  # 14:00 local
+            rate("2026-08-11T13:30:00"),  # 14:30 local
+            rate("2026-08-11T18:00:00"),  # 19:00 local
+            rate("2026-08-11T18:30:00"),  # 19:30 local
+        ]
+
+    def compute_with_half_hour_budget(self):
+        return self.scheduler.compute_schedule_for_date(
+            target_date=date(2026, 8, 11),
+            rates=self.fixed_window_rates,
+            budget_hours=0.5,
+            max_price=30.0,
+            use_below_average=True,
+            blocked_hours=[],
+        )
+
+    def test_current_fixed_windows_select_four_hours_despite_half_hour_budget(self):
+        """Document current behavior until the scheduling policy is redesigned."""
+        selected = self.compute_with_half_hour_budget()
+
+        self.assertEqual(selected, self.fixed_window_rates)
+        self.assertEqual(len(selected) * 0.5, 4.0)
+
+    @unittest.expectedFailure
+    def test_daily_heating_budget_should_cap_total_selected_duration(self):
+        """Known defect: fixed windows currently override the configured budget."""
+        selected = self.compute_with_half_hour_budget()
+
+        self.assertLessEqual(len(selected) * 0.5, 0.5)
+
+
 if __name__ == "__main__":
     unittest.main()
