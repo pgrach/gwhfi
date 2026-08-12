@@ -20,6 +20,7 @@ import {
 } from "recharts"
 import { getUKDateBoundaries, getUKDateBoundariesForDate, getUKDateString } from "@/lib/date-utils"
 import { OCTOPUS_RATES_URL } from "@/lib/octopus-config"
+import { bridgeSingleBucketGaps } from "@/lib/power-series"
 
 interface Rate {
     value_inc_vat: number
@@ -452,8 +453,7 @@ export function CombinedHistoryChart() {
 
                 const slotReadings = readingsBySlot.get(slotTime) || []
 
-                // Missing telemetry is unknown, not a measured 0W sample. Recharts
-                // renders nulls as gaps while preserving explicit zero readings.
+                // Missing telemetry is unknown, not a measured 0W sample.
                 const r0 = slotReadings.find(r => r.channel === 0)
                 const r1 = slotReadings.find(r => r.channel === 1)
                 const power0 = r0?.avg_power == null ? null : Number(r0.avg_power)
@@ -471,6 +471,18 @@ export function CombinedHistoryChart() {
                 })
 
                 currentCursor.setUTCMinutes(currentCursor.getUTCMinutes() + bucketMinutes)
+            }
+
+            // Healthy one-minute polling can skip one bucket because network
+            // time is added after each 60-second sleep. Bridge only one enclosed
+            // missing minute; longer or edge gaps remain visibly unknown.
+            if (bucketMinutes === 1) {
+                const peakTrace = bridgeSingleBucketGaps(buckets.map((point) => point.power_0))
+                const storageTrace = bridgeSingleBucketGaps(buckets.map((point) => point.power_1))
+                buckets.forEach((point, index) => {
+                    point.power_0 = peakTrace[index]
+                    point.power_1 = storageTrace[index]
+                })
             }
 
             setData(buckets)

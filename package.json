@@ -8,8 +8,9 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
+    "test:frontend": "node --test test/power-series.test.mjs",
     "test:python": "python -m unittest discover -s ingestion -p \"test_*.py\"",
-    "test": "npm run typecheck && npm run lint && npm run test:python"
+    "test": "npm run typecheck && npm run lint && npm run test:frontend && npm run test:python"
   },
   "dependencies": {
     "@radix-ui/react-accordion": "^1.2.12",
