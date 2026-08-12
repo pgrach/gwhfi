@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { createClient, type SupabaseClient } from "@supabase/supabase-js"
 import { getUKDateBoundaries, getUKDateBoundariesForDate, getUKDateString } from "@/lib/date-utils"
+import { isHistoricalCalendarDate } from "@/lib/date-selection"
 import { OCTOPUS_RATES_URL } from "@/lib/octopus-config"
 
 const OCTOPUS_BASE = OCTOPUS_RATES_URL
@@ -207,7 +208,7 @@ export async function GET(request: Request) {
     try {
         const yesterdayDate = getUKDateString(-1)
         const selectedDateRaw = new URL(request.url).searchParams.get("selectedDate")
-        const selectedDate = selectedDateRaw && /^\d{4}-\d{2}-\d{2}$/.test(selectedDateRaw)
+        const selectedDate = isHistoricalCalendarDate(selectedDateRaw, yesterdayDate)
             ? selectedDateRaw
             : null
 
@@ -224,7 +225,7 @@ export async function GET(request: Request) {
         const sevenDayStart = getUKDateBoundaries(-7).start
         const thirtyDayStart = getUKDateBoundaries(-30).start
 
-        const selectedDateBounds = selectedDate && selectedDate <= yesterdayDate
+        const selectedDateBounds = selectedDate
             ? getUKDateBoundariesForDate(selectedDate)
             : null
 

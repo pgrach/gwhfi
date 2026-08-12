@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react"
 import { useSearchParams } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { isHistoricalCalendarDate } from "@/lib/date-selection"
+import { getUKDateString } from "@/lib/date-utils"
 
 interface PaidPriceWindow {
     avg_paid_ppkwh: number | null
@@ -46,29 +48,47 @@ function formatWindowValue(window: PaidPriceWindow | null | undefined): string {
 
 export function PaidPriceInsights() {
     const searchParams = useSearchParams()
-    const selectedDate = searchParams.get("selectedDate")
+    const selectedDateRaw = searchParams.get("selectedDate")
+    const selectedDate = isHistoricalCalendarDate(selectedDateRaw, getUKDateString(-1))
+        ? selectedDateRaw
+        : null
     const [stats, setStats] = useState<EnergyStatsResponse | null>(null)
     const [loading, setLoading] = useState(true)
 
     useEffect(() => {
+        const controller = new AbortController()
+
         const fetchStats = async () => {
+            setLoading(true)
             try {
                 const query = selectedDate ? `?selectedDate=${encodeURIComponent(selectedDate)}` : ""
-                const response = await fetch(`/api/energy-stats${query}`, { cache: "no-store" })
+                const response = await fetch(`/api/energy-stats${query}`, {
+                    cache: "no-store",
+                    signal: controller.signal,
+                })
+                if (controller.signal.aborted) return
                 if (response.ok) {
                     const data: EnergyStatsResponse = await response.json()
+                    if (controller.signal.aborted) return
                     setStats(data)
+                } else {
+                    setStats(null)
                 }
             } catch (error) {
+                if (controller.signal.aborted) return
                 console.error("Failed to fetch paid price insights:", error)
+                setStats(null)
             } finally {
-                setLoading(false)
+                if (!controller.signal.aborted) setLoading(false)
             }
         }
 
         fetchStats()
         const interval = setInterval(fetchStats, 5 * 60 * 1000)
-        return () => clearInterval(interval)
+        return () => {
+            controller.abort()
+            clearInterval(interval)
+        }
     }, [selectedDate])
 
     return (

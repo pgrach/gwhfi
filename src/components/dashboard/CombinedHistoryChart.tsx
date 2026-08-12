@@ -19,6 +19,15 @@ import {
     ReferenceLine,
 } from "recharts"
 import { getUKDateBoundaries, getUKDateBoundariesForDate, getUKDateString } from "@/lib/date-utils"
+import {
+    calendarValueForView,
+    classifyDateSelection,
+    EARLIEST_DASHBOARD_DATE,
+    isHistoricalCalendarDate,
+    isValidCalendarDate,
+    resolveDateView,
+    type DateViewMode,
+} from "@/lib/date-selection"
 import { OCTOPUS_RATES_URL } from "@/lib/octopus-config"
 import { bridgeSingleBucketGaps, collectScheduledPeriods, formatScheduleRangeEnd } from "@/lib/power-series"
 
@@ -106,18 +115,16 @@ export function CombinedHistoryChart() {
     const pathname = usePathname()
     const searchParams = useSearchParams()
     const selectedDateParam = searchParams.get("selectedDate")
-    const hasValidSelectedDateParam = !!selectedDateParam && /^\d{4}-\d{2}-\d{2}$/.test(selectedDateParam)
+    const requestedViewParam = searchParams.get("view")
+    const currentQuery = searchParams.toString()
+    const ukToday = getUKDateString(0)
+    const ukTomorrow = getUKDateString(1)
+    const ukYesterday = getUKDateString(-1)
+    const resolvedDateView = resolveDateView(selectedDateParam, requestedViewParam, ukToday, ukTomorrow)
+    const viewMode = resolvedDateView.viewMode
+    const customDate = resolvedDateView.customDate ?? ukYesterday
 
     const [data, setData] = useState<ChartPoint[]>([])
-    const [viewMode, setViewMode] = useState<"today" | "tomorrow" | "7d" | "30d" | "custom">(
-        hasValidSelectedDateParam ? "custom" : "today"
-    )
-    const [customDate, setCustomDate] = useState<string>(() => {
-        if (hasValidSelectedDateParam && selectedDateParam) {
-            return selectedDateParam
-        }
-        return getUKDateString(-1)
-    })
     const [hasRates, setHasRates] = useState(true)
     const [totals, setTotals] = useState<{ peak: number | null; offPeak: number | null }>({
         peak: null,
@@ -128,19 +135,47 @@ export function CombinedHistoryChart() {
     const [nowMs, setNowMs] = useState(() => Date.now())
     const [refreshKey, setRefreshKey] = useState(0)
 
-    const isValidDateInputValue = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value)
+    const navigateToDateView = (nextView: DateViewMode, date?: string) => {
+        const params = new URLSearchParams(currentQuery)
+        params.delete("selectedDate")
+        params.delete("view")
 
-    const updateSelectedDateQuery = (value: string | null) => {
-        const params = new URLSearchParams(searchParams.toString())
-        if (value) {
-            params.set("selectedDate", value)
-        } else {
-            params.delete("selectedDate")
+        if (nextView === "custom" && date) {
+            params.set("selectedDate", date)
+        } else if (nextView !== "today") {
+            params.set("view", nextView)
         }
 
         const query = params.toString()
         router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false })
     }
+
+    useEffect(() => {
+        const params = new URLSearchParams(currentQuery)
+        let canonicalDate: string | null = null
+        let canonicalView: "tomorrow" | "7d" | "30d" | null = null
+
+        if (isHistoricalCalendarDate(selectedDateParam, ukYesterday)) {
+            canonicalDate = selectedDateParam
+        } else if (selectedDateParam === ukTomorrow) {
+            canonicalView = "tomorrow"
+        } else if (selectedDateParam !== ukToday) {
+            if (requestedViewParam === "tomorrow" || requestedViewParam === "7d" || requestedViewParam === "30d") {
+                canonicalView = requestedViewParam
+            }
+        }
+
+        if (canonicalDate) params.set("selectedDate", canonicalDate)
+        else params.delete("selectedDate")
+
+        if (canonicalView) params.set("view", canonicalView)
+        else params.delete("view")
+
+        if (params.toString() === currentQuery) return
+
+        const query = params.toString()
+        router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false })
+    }, [currentQuery, pathname, requestedViewParam, router, selectedDateParam, ukToday, ukTomorrow, ukYesterday])
 
     useEffect(() => {
         const clockInterval = window.setInterval(() => setNowMs(Date.now()), 30_000)
@@ -181,9 +216,7 @@ export function CombinedHistoryChart() {
                     startDate = start
                     endDate = end
                 } catch {
-                    const fallbackDate = getUKDateString(-1)
-                    setCustomDate(fallbackDate)
-                    const { start, end } = getUKDateBoundariesForDate(fallbackDate)
+                    const { start, end } = getUKDateBoundariesForDate(ukYesterday)
                     startDate = start
                     endDate = end
                 }
@@ -478,7 +511,7 @@ export function CombinedHistoryChart() {
         return () => {
             cancelled = true
         }
-    }, [viewMode, customDate, refreshKey])
+    }, [viewMode, customDate, refreshKey, ukToday, ukYesterday])
 
     const lastPoint = data.at(-1)
     const chartBucketMinutes = (viewMode === "today" || viewMode === "tomorrow" || viewMode === "custom") ? 1 : 60
@@ -499,7 +532,7 @@ export function CombinedHistoryChart() {
                 </CardHeader>
                 <CardContent className="h-[400px] flex items-center justify-center">
                     <div className="text-center space-y-4">
-                        <Button variant="outline" size="sm" onClick={() => setViewMode("today")}>
+                        <Button variant="outline" size="sm" onClick={() => navigateToDateView("today")}>
                             Back to Today
                         </Button>
                         <p className="text-muted-foreground">
@@ -596,33 +629,34 @@ export function CombinedHistoryChart() {
                 </div>
                 <div className="flex flex-wrap gap-2 items-center">
                     <Button variant={viewMode === "today" ? "default" : "outline"} size="sm" onClick={() => {
-                        updateSelectedDateQuery(null)
-                        setViewMode("today")
+                        navigateToDateView("today")
                     }}>Today</Button>
                     <Button variant={viewMode === "tomorrow" ? "default" : "outline"} size="sm" onClick={() => {
-                        updateSelectedDateQuery(null)
-                        setViewMode("tomorrow")
+                        navigateToDateView("tomorrow")
                     }}>Tomorrow</Button>
                     <Button variant={viewMode === "7d" ? "default" : "outline"} size="sm" onClick={() => {
-                        updateSelectedDateQuery(null)
-                        setViewMode("7d")
+                        navigateToDateView("7d")
                     }}>7d</Button>
                     <Button variant={viewMode === "30d" ? "default" : "outline"} size="sm" onClick={() => {
-                        updateSelectedDateQuery(null)
-                        setViewMode("30d")
+                        navigateToDateView("30d")
                     }}>30d</Button>
                     <input
                         type="date"
-                        max={getUKDateString(-1)}
-                        value={viewMode === "custom" ? customDate : ""}
-                        aria-label="Choose a historical date"
-                        title={viewMode === "custom" ? "Selected historical date" : "Choose a historical date"}
+                        min={EARLIEST_DASHBOARD_DATE}
+                        max={ukTomorrow}
+                        value={calendarValueForView(viewMode, ukToday, ukTomorrow, customDate)}
+                        aria-label="Choose a date"
+                        title={viewMode === "today" ? "Today" : viewMode === "tomorrow" ? "Tomorrow" : viewMode === "custom" ? "Selected historical date" : "Choose a date"}
                         onChange={(e) => {
-                            if (isValidDateInputValue(e.target.value)) {
-                                setCustomDate(e.target.value)
-                                setViewMode("custom")
-                                updateSelectedDateQuery(e.target.value)
+                            if (!isValidCalendarDate(e.target.value)) return
+
+                            const selection = classifyDateSelection(e.target.value, ukToday, ukTomorrow)
+                            if (selection.customDate) {
+                                navigateToDateView("custom", selection.customDate)
+                                return
                             }
+
+                            navigateToDateView(selection.viewMode)
                         }}
                         className={`h-9 rounded-md border px-2 text-sm cursor-pointer
                             ${viewMode === "custom"
