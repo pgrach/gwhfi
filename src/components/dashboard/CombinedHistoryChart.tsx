@@ -29,7 +29,7 @@ import {
     type DateViewMode,
 } from "@/lib/date-selection"
 import { OCTOPUS_RATES_URL } from "@/lib/octopus-config"
-import { bridgeSingleBucketGaps, collectScheduledPeriods, formatScheduleRangeEnd } from "@/lib/power-series"
+import { bridgeSingleBucketGaps, collectScheduledPeriods } from "@/lib/power-series"
 
 interface Rate {
     value_inc_vat: number
@@ -63,7 +63,6 @@ interface CounterPoint {
 }
 
 interface ChartPoint {
-    timestamp: string
     raw_time: number
     rate: number | null
     isScheduled: boolean
@@ -443,15 +442,7 @@ export function CombinedHistoryChart() {
 
             rates.sort((a, b) => new Date(a.valid_from).getTime() - new Date(b.valid_from).getTime())
 
-            const isDayView = viewMode === "today" || viewMode === "tomorrow" || viewMode === "custom"
             while (currentCursor <= endDate) {
-                const timestamp = currentCursor.toLocaleString([], {
-                    timeZone: 'Europe/London',
-                    month: isDayView ? undefined : 'numeric',
-                    day: isDayView ? undefined : 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                })
                 const slotTime = currentCursor.getTime()
 
                 // Find Rate
@@ -481,7 +472,6 @@ export function CombinedHistoryChart() {
                 const avg1 = power1 !== null && Number.isFinite(power1) ? power1 : null
 
                 buckets.push({
-                    timestamp,
                     raw_time: slotTime,
                     rate: rateObj ? rateObj.value_inc_vat : null,
                     isScheduled: isScheduled,
@@ -513,13 +503,11 @@ export function CombinedHistoryChart() {
         }
     }, [viewMode, customDate, refreshKey, ukToday, ukYesterday])
 
-    const lastPoint = data.at(-1)
-    const chartBucketMinutes = (viewMode === "today" || viewMode === "tomorrow" || viewMode === "custom") ? 1 : 60
-    const scheduleRangeEnd = lastPoint
-        ? formatScheduleRangeEnd(lastPoint.raw_time, chartBucketMinutes)
-        : undefined
+    const isDayView = viewMode === "today" || viewMode === "tomorrow" || viewMode === "custom"
+    const chartBucketMinutes = isDayView ? 1 : 60
+    const chartBucketMs = chartBucketMinutes * 60_000
     const scheduledPeriods = chartBucketMinutes === 1
-        ? collectScheduledPeriods(data, scheduleRangeEnd)
+        ? collectScheduledPeriods(data, chartBucketMinutes)
         : []
 
     // Check for missing Tomorrow data
@@ -561,7 +549,7 @@ export function CombinedHistoryChart() {
 
     // Find current time position for vertical highlight
     const now = new Date(nowMs)
-    let currentTimestamp = null
+    let currentTimestamp: number | null = null
 
     if (data.length > 0) {
         // Find the closest data point to current time
@@ -583,7 +571,7 @@ export function CombinedHistoryChart() {
         // (within the view period)
         const maxDiff = (viewMode === "today" || viewMode === "tomorrow" || viewMode === "custom") ? 60000 : 3600000
         if (minDiff < maxDiff) {
-            currentTimestamp = closestPoint
+            currentTimestamp = closestPoint.raw_time
         }
     }
 
@@ -686,7 +674,7 @@ export function CombinedHistoryChart() {
                                     key={`scheduled-${idx}`}
                                     x1={period.start}
                                     x2={period.end}
-                                    yAxisId="right"
+                                    yAxisId="left"
                                     fill="#10b981"
                                     fillOpacity={0.08}
                                     stroke="#10b981"
@@ -697,7 +685,7 @@ export function CombinedHistoryChart() {
                             {/* Current time indicator - only show for today and 7d/30d views */}
                             {currentTimestamp && viewMode === "today" && (
                                 <ReferenceLine
-                                    x={currentTimestamp.timestamp}
+                                    x={currentTimestamp}
                                     yAxisId="left"
                                     stroke="#3b82f6"
                                     strokeWidth={2}
@@ -713,11 +701,21 @@ export function CombinedHistoryChart() {
                             )}
 
                             <XAxis
-                                dataKey="timestamp"
+                                dataKey="raw_time"
+                                type="number"
+                                domain={([dataMin, dataMax]) => [dataMin, dataMax + chartBucketMs]}
+                                scale="time"
                                 stroke="#888888"
                                 fontSize={12}
                                 tickLine={false}
                                 axisLine={false}
+                                tickFormatter={(value) => new Date(Number(value)).toLocaleString([], {
+                                    timeZone: 'Europe/London',
+                                    month: isDayView ? undefined : 'numeric',
+                                    day: isDayView ? undefined : 'numeric',
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                })}
                                 minTickGap={(viewMode === "today" || viewMode === "tomorrow" || viewMode === "custom") ? 30 : 60}
                             />
                             {/* Left Axis: Price */}
@@ -745,6 +743,14 @@ export function CombinedHistoryChart() {
 
                             <Tooltip
                                 contentStyle={{ backgroundColor: "#1f2937", border: "none", color: "#fff" }}
+                                labelFormatter={(value) => new Date(Number(value)).toLocaleString([], {
+                                    timeZone: 'Europe/London',
+                                    month: isDayView ? undefined : 'numeric',
+                                    day: isDayView ? undefined : 'numeric',
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                    timeZoneName: isDayView ? 'short' : undefined,
+                                })}
                                 formatter={(value, name, props) => {
                                     if (name === "Rate (p/kWh)") {
                                         const point = props.payload as ChartPoint | undefined
