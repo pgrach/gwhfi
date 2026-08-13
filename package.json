@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test:frontend": "node --test test/power-series.test.mjs test/date-selection.test.mjs test/telemetry-scope.test.mjs test/downsampled-readings.test.mjs test/analytics-ranges.test.mjs test/supabase-schema.test.mjs",
+    "test:frontend": "node --test test/power-series.test.mjs test/date-selection.test.mjs",
     "test:python": "python -m unittest discover -s ingestion -p \"test_*.py\"",
     "test": "npm run typecheck && npm run lint && npm run test:frontend && npm run test:python"
   },

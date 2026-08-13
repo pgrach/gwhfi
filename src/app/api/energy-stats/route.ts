@@ -3,18 +3,8 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js"
 import { getUKDateBoundaries, getUKDateBoundariesForDate, getUKDateString } from "@/lib/date-utils"
 import { isHistoricalCalendarDate } from "@/lib/date-selection"
 import { OCTOPUS_RATES_URL } from "@/lib/octopus-config"
-import {
-    buildEnergyCounterSeriesRequest,
-    resolveMeterDeviceId,
-    siteOrLegacyFilter,
-} from "@/lib/telemetry-scope"
-import { fetchCompleteDownsampledRange } from "@/lib/downsampled-readings"
-import { planAnalyticsRanges } from "@/lib/analytics-ranges"
 
 const OCTOPUS_BASE = OCTOPUS_RATES_URL
-// Five-minute counter buckets keep a 30-day response compact while limiting
-// tariff-boundary allocation uncertainty for short thermostat cycles.
-const COUNTER_SERIES_BUCKET_SECONDS = 5 * 60
 
 interface RateApiResult {
     value_inc_vat: number
@@ -29,14 +19,9 @@ interface RateInterval {
 }
 
 interface EnergyReading {
-    device_id: string
     channel: number
     created_at: string
-    energy_total_wh: number | null
-}
-
-interface EnergyCounterSeriesReading extends EnergyReading {
-    bucket_time: string
+    energy_total_wh: number
 }
 
 interface WindowResult {
@@ -98,21 +83,12 @@ async function fetchReadingsForChannel(
     supabase: SupabaseClient,
     channel: number,
     startIso: string,
-    endIso: string,
-    meterDeviceId: string | null,
-    siteId: string | null,
+    endIso: string
 ): Promise<EnergyReading[]> {
-    let previousQuery = supabase
+    const previousResponse = await supabase
         .from("energy_readings")
-        .select("device_id, channel, created_at, energy_total_wh")
+        .select("channel, created_at, energy_total_wh")
         .eq("channel", channel)
-
-    if (meterDeviceId && siteId) {
-        previousQuery = previousQuery.eq("device_id", meterDeviceId)
-        previousQuery = previousQuery.or(siteOrLegacyFilter(siteId))
-    }
-
-    const previousResponse = await previousQuery
         .lt("created_at", startIso)
         .order("created_at", { ascending: false })
         .limit(1)
@@ -126,17 +102,10 @@ async function fetchReadingsForChannel(
     const readings: EnergyReading[] = []
 
     while (true) {
-        let pageQuery = supabase
+        const pageResponse = await supabase
             .from("energy_readings")
-            .select("device_id, channel, created_at, energy_total_wh")
+            .select("channel, created_at, energy_total_wh")
             .eq("channel", channel)
-
-        if (meterDeviceId && siteId) {
-            pageQuery = pageQuery.eq("device_id", meterDeviceId)
-            pageQuery = pageQuery.or(siteOrLegacyFilter(siteId))
-        }
-
-        const pageResponse = await pageQuery
             .gte("created_at", startIso)
             .lte("created_at", endIso)
             .order("created_at", { ascending: true })
@@ -164,104 +133,6 @@ async function fetchReadingsForChannel(
     return [...previous.reverse(), ...readings]
 }
 
-interface AnalyticsRangeData {
-    rates: RateInterval[]
-    readingsByChannel: EnergyReading[][]
-}
-
-async function fetchScopedCounterReadings(
-    supabase: SupabaseClient,
-    startMs: number,
-    endMs: number,
-    meterDeviceId: string,
-    siteId: string,
-): Promise<EnergyReading[][]> {
-    const channels = [0, 1] as const
-    const startIso = new Date(startMs).toISOString()
-
-    const previousResponsesPromise = Promise.all(channels.map((channel) => (
-        supabase
-            .from("energy_readings")
-            .select("device_id, channel, created_at, energy_total_wh")
-            .eq("device_id", meterDeviceId)
-            .or(siteOrLegacyFilter(siteId))
-            .eq("channel", channel)
-            .not("energy_total_wh", "is", null)
-            .lt("created_at", startIso)
-            .order("created_at", { ascending: false })
-            .limit(1)
-    )))
-
-    // UK date helpers expose inclusive end-of-day instants. The counter RPC is
-    // half-open, so add 1ms to preserve the existing window coverage exactly.
-    const seriesResultPromise = fetchCompleteDownsampledRange<EnergyCounterSeriesReading>(
-        startMs,
-        endMs + 1,
-        COUNTER_SERIES_BUCKET_SECONDS,
-        async (chunkStartIso, chunkEndIso) => {
-            const request = buildEnergyCounterSeriesRequest(
-                chunkStartIso,
-                chunkEndIso,
-                COUNTER_SERIES_BUCKET_SECONDS,
-                siteId,
-                meterDeviceId,
-            )
-            const response = await supabase.rpc(request.functionName, request.params)
-            return {
-                data: response.data as EnergyCounterSeriesReading[] | null,
-                error: response.error,
-            }
-        },
-    )
-
-    const [previousResponses, seriesResult] = await Promise.all([
-        previousResponsesPromise,
-        seriesResultPromise,
-    ])
-
-    if (previousResponses.some((response) => response.error)) {
-        throw new Error("Failed to fetch counter reading before analytics range")
-    }
-    if (seriesResult.errors.length > 0) {
-        throw new Error("Failed to fetch compact energy counter series")
-    }
-
-    return channels.map((channel, index) => {
-        const previous = (previousResponses[index].data ?? []) as EnergyReading[]
-        const series = seriesResult.data.filter((reading) => reading.channel === channel)
-        return [...previous, ...series]
-    })
-}
-
-async function fetchAnalyticsRange(
-    supabase: SupabaseClient,
-    startMs: number,
-    endMs: number,
-    meterDeviceId: string | null,
-    siteId: string | null,
-): Promise<AnalyticsRangeData> {
-    const startIso = new Date(startMs).toISOString()
-    const endIso = new Date(endMs).toISOString()
-    const readingsPromise = meterDeviceId && siteId
-        ? fetchScopedCounterReadings(
-            supabase,
-            startMs,
-            endMs,
-            meterDeviceId,
-            siteId,
-        )
-        : Promise.all([
-            fetchReadingsForChannel(supabase, 0, startIso, endIso, null, null),
-            fetchReadingsForChannel(supabase, 1, startIso, endIso, null, null),
-        ])
-
-    const [rates, readingsByChannel] = await Promise.all([
-        fetchRates(startIso, endIso),
-        readingsPromise,
-    ])
-    return { rates, readingsByChannel }
-}
-
 function computeWindowResult(
     rates: RateInterval[],
     readingsByChannel: EnergyReading[][],
@@ -279,12 +150,6 @@ function computeWindowResult(
             const previous = readings[index - 1]
             const current = readings[index]
 
-            // Never interpret a counter jump between two physical meters as
-            // consumption, including during the legacy unscoped rollout mode.
-            if (previous.device_id !== current.device_id) {
-                continue
-            }
-
             const previousMs = new Date(previous.created_at).getTime()
             const currentMs = new Date(current.created_at).getTime()
             if (!Number.isFinite(previousMs) || !Number.isFinite(currentMs) || currentMs <= previousMs) {
@@ -294,10 +159,6 @@ function computeWindowResult(
             const segmentStart = Math.max(previousMs, startMs)
             const segmentEnd = Math.min(currentMs, endMs)
             if (segmentEnd <= segmentStart) {
-                continue
-            }
-
-            if (current.energy_total_wh === null || previous.energy_total_wh === null) {
                 continue
             }
 
@@ -353,14 +214,6 @@ export async function GET(request: Request) {
 
         const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
         const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-        const meterDeviceId = resolveMeterDeviceId(
-            process.env.SHELLY_METER_DEVICE_ID,
-            process.env.NEXT_PUBLIC_SHELLY_METER_DEVICE_ID,
-        )
-        const siteId = resolveMeterDeviceId(
-            process.env.TELEMETRY_SITE_ID,
-            process.env.NEXT_PUBLIC_TELEMETRY_SITE_ID,
-        )
 
         if (!supabaseUrl || !supabaseAnonKey) {
             return NextResponse.json({ error: "Supabase environment variables are missing" }, { status: 500 })
@@ -376,42 +229,18 @@ export async function GET(request: Request) {
             ? getUKDateBoundariesForDate(selectedDate)
             : null
 
+        const globalStart = selectedDateBounds && selectedDateBounds.start < thirtyDayStart
+            ? selectedDateBounds.start
+            : thirtyDayStart
         const globalEnd = yesterdayBounds.end
-        const rangePlan = planAnalyticsRanges(
-            {
-                startMs: thirtyDayStart.getTime(),
-                endMs: globalEnd.getTime(),
-            },
-            selectedDateBounds
-                ? {
-                    startMs: selectedDateBounds.start.getTime(),
-                    endMs: selectedDateBounds.end.getTime(),
-                }
-                : null,
-        )
 
-        // Keep one bounded recent-range query regardless of how old the user-
-        // selected date is. If that day lies outside the recent window, fetch
-        // only that isolated day afterwards so concurrent RPCs remain capped.
-        const recentData = await fetchAnalyticsRange(
-            supabase,
-            rangePlan.recent.startMs,
-            rangePlan.recent.endMs,
-            meterDeviceId,
-            siteId,
-        )
-        const selectedSeparateData = rangePlan.selectedSeparate
-            ? await fetchAnalyticsRange(
-                supabase,
-                rangePlan.selectedSeparate.startMs,
-                rangePlan.selectedSeparate.endMs,
-                meterDeviceId,
-                siteId,
-            )
-            : null
+        const [rates, channel0Readings, channel1Readings] = await Promise.all([
+            fetchRates(globalStart.toISOString(), globalEnd.toISOString()),
+            fetchReadingsForChannel(supabase, 0, globalStart.toISOString(), globalEnd.toISOString()),
+            fetchReadingsForChannel(supabase, 1, globalStart.toISOString(), globalEnd.toISOString()),
+        ])
 
-        const rates = recentData.rates
-        const readingsByChannel = recentData.readingsByChannel
+        const readingsByChannel = [channel0Readings, channel1Readings]
 
         const yesterday = computeWindowResult(
             rates,
@@ -432,13 +261,12 @@ export async function GET(request: Request) {
             yesterdayBounds.end.getTime()
         )
 
-        const selectedData = selectedSeparateData ?? recentData
         const selected_day: SelectedDayResult | null = selectedDateBounds && selectedDate
             ? {
                 date: selectedDate,
                 window: computeWindowResult(
-                    selectedData.rates,
-                    selectedData.readingsByChannel,
+                    rates,
+                    readingsByChannel,
                     selectedDateBounds.start.getTime(),
                     selectedDateBounds.end.getTime()
                 ),
@@ -447,15 +275,7 @@ export async function GET(request: Request) {
 
         return NextResponse.json({
             scope: "all_heaters_combined",
-            telemetry_scope: meterDeviceId && siteId
-                ? "configured_site_and_meter"
-                : meterDeviceId || siteId
-                    ? "partially_configured_legacy"
-                    : "all_sites_and_devices_legacy",
             method: "kwh_weighted_avg_price_paid",
-            counter_series: meterDeviceId && siteId
-                ? `latest_real_counter_per_${COUNTER_SERIES_BUCKET_SECONDS}_seconds`
-                : "raw_rows_legacy",
             windows: "uk_calendar_complete_days",
             yesterday,
             last7d,

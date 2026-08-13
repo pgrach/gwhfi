@@ -30,13 +30,6 @@ import {
 } from "@/lib/date-selection"
 import { OCTOPUS_RATES_URL } from "@/lib/octopus-config"
 import { bridgeSingleBucketGaps, collectScheduledPeriods } from "@/lib/power-series"
-import {
-    buildDownsampledReadingsRequest,
-    PUBLIC_METER_DEVICE_ID,
-    PUBLIC_TELEMETRY_SITE_ID,
-    siteOrLegacyFilter,
-} from "@/lib/telemetry-scope"
-import { fetchCompleteDownsampledRange } from "@/lib/downsampled-readings"
 
 interface Rate {
     value_inc_vat: number
@@ -59,7 +52,7 @@ interface DownsampledReading {
 
 interface CounterReading {
     device_id: string
-    energy_total_wh: number | null
+    energy_total_wh: number
     created_at: string
 }
 
@@ -79,8 +72,6 @@ interface ChartPoint {
 
 function asCounterPoint(reading: CounterReading | undefined): CounterPoint | null {
     if (!reading) return null
-
-    if (reading.energy_total_wh === null) return null
 
     const wattHours = Number(reading.energy_total_wh)
     const timestampMs = Date.parse(reading.created_at)
@@ -261,43 +252,47 @@ export function CombinedHistoryChart() {
             // ALWAYS use RPC downsampling to avoid Supabase's 1000-row limit
             const bucketMinutes = (viewMode === "today" || viewMode === "tomorrow" || viewMode === "custom") ? 1 : 60
 
-            const fetchReadingsChunk = (chunkStartIso: string, chunkEndIso: string) => {
-                const request = buildDownsampledReadingsRequest(
-                    chunkStartIso,
-                    chunkEndIso,
-                    bucketMinutes * 60,
-                    PUBLIC_METER_DEVICE_ID,
-                    PUBLIC_TELEMETRY_SITE_ID,
-                )
-                return supabase.rpc(request.functionName, request.params)
-            }
-
-            // Each bucket can return both channels, so even one day of minute
-            // telemetry exceeds Supabase's 1000-row response limit. Fetch in
-            // bounded time slices and recursively split any response that still
-            // reaches the cap. The helper also de-duplicates inclusive legacy
-            // RPC boundaries and restores chronological order.
+            // Supabase PostgREST enforces a 1000-row server-side limit.
+            // For 30d view (~1440 rows), split into two parallel 15-day chunks.
             const readingsPromise: Promise<DownsampledReading[]> = (async () => {
-                const result = await fetchCompleteDownsampledRange<DownsampledReading>(
-                    startDate.getTime(),
-                    endDate.getTime(),
-                    bucketMinutes * 60,
-                    async (chunkStartIso, chunkEndIso) => {
-                        const response = await fetchReadingsChunk(chunkStartIso, chunkEndIso)
-                        return {
-                            data: response.data as DownsampledReading[] | null,
-                            error: response.error,
-                        }
-                    },
-                )
-
-                if (result.errors.length > 0) {
-                    readingsFetchFailed = true
-                    result.errors.forEach((error, index) => {
-                        console.error(`Supabase telemetry error (chunk ${index + 1}):`, error)
+                if (viewMode === "30d") {
+                    const midTime = new Date((startDate.getTime() + endDate.getTime()) / 2)
+                    const midIso = midTime.toISOString()
+                    const [firstHalf, secondHalf] = await Promise.all([
+                        supabase.rpc('get_downsampled_readings', {
+                            start_time: startIso,
+                            end_time: midIso,
+                            bucket_seconds: bucketMinutes * 60
+                        }),
+                        supabase.rpc('get_downsampled_readings', {
+                            start_time: midIso,
+                            end_time: endIso,
+                            bucket_seconds: bucketMinutes * 60
+                        })
+                    ])
+                    const data1 = firstHalf.data || []
+                    const data2 = secondHalf.data || []
+                    if (firstHalf.error) {
+                        readingsFetchFailed = true
+                        console.error("Supabase Error (chunk 1):", firstHalf.error)
+                    }
+                    if (secondHalf.error) {
+                        readingsFetchFailed = true
+                        console.error("Supabase Error (chunk 2):", secondHalf.error)
+                    }
+                    return [...data1, ...data2]
+                } else {
+                    const res = await supabase.rpc('get_downsampled_readings', {
+                        start_time: startIso,
+                        end_time: endIso,
+                        bucket_seconds: bucketMinutes * 60
                     })
+                    if (res.error) {
+                        readingsFetchFailed = true
+                        console.error("Supabase Error:", res.error)
+                    }
+                    return res.data || []
                 }
-                return result.data
             })()
 
             // Fetch only the off-peak schedule that drives the storage heater.
@@ -313,36 +308,34 @@ export function CombinedHistoryChart() {
             // Average power is useful for the chart, but summing fixed-size buckets
             // overstates usage when telemetry is missing or irregular.
             const channelTotalsPromise = Promise.all([0, 1].map(async (channel) => {
-                const counterQuery = () => {
-                    let query = supabase
+                const [beforeStartRes, afterStartRes, beforeEndRes, afterEndRes] = await Promise.all([
+                    supabase
                         .from('energy_readings')
                         .select('device_id, energy_total_wh, created_at')
                         .eq('channel', channel)
-                        .not('energy_total_wh', 'is', null)
-
-                    if (PUBLIC_METER_DEVICE_ID && PUBLIC_TELEMETRY_SITE_ID) {
-                        query = query.eq('device_id', PUBLIC_METER_DEVICE_ID)
-                        query = query.or(siteOrLegacyFilter(PUBLIC_TELEMETRY_SITE_ID))
-                    }
-                    return query
-                }
-
-                const [beforeStartRes, afterStartRes, beforeEndRes, afterEndRes] = await Promise.all([
-                    counterQuery()
                         .lte('created_at', startIso)
                         .order('created_at', { ascending: false })
                         .limit(1),
-                    counterQuery()
+                    supabase
+                        .from('energy_readings')
+                        .select('device_id, energy_total_wh, created_at')
+                        .eq('channel', channel)
                         .gte('created_at', startIso)
                         .lte('created_at', endIso)
                         .order('created_at', { ascending: true })
                         .limit(1),
-                    counterQuery()
+                    supabase
+                        .from('energy_readings')
+                        .select('device_id, energy_total_wh, created_at')
+                        .eq('channel', channel)
                         .gte('created_at', startIso)
                         .lte('created_at', endIso)
                         .order('created_at', { ascending: false })
                         .limit(1),
-                    counterQuery()
+                    supabase
+                        .from('energy_readings')
+                        .select('device_id, energy_total_wh, created_at')
+                        .eq('channel', channel)
                         .gte('created_at', endIso)
                         .order('created_at', { ascending: true })
                         .limit(1),
@@ -552,9 +545,7 @@ export function CombinedHistoryChart() {
         return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     }
 
-    // One-minute fixed-cadence telemetry should stay fresh through a few
-    // transient cloud delays, but a stopped collector must become visible.
-    const systemStatus = lastUpdate && (nowMs - lastUpdate.getTime()) < 5 * 60 * 1000 ? "active" : "stale"
+    const systemStatus = lastUpdate && (nowMs - lastUpdate.getTime()) < 120000 ? "active" : "stale"
 
     // Find current time position for vertical highlight
     const now = new Date(nowMs)

@@ -51,11 +51,6 @@ This project consists of three main components:
 2.  **Controller (Python)**: Local service that controls the heaters based on Octopus Agile rates (via Tuya).
 3.  **Data Worker (Python)**: Background service that ingests real-time power data from Shelly Cloud to Supabase.
 
-The telemetry meanings, quality rules, and model-ready evolution path are
-documented in [`docs/DATA_PIPELINE.md`](docs/DATA_PIPELINE.md).
-Migration, compatibility, and access-control details are documented in
-[`docs/SUPABASE_SCHEMA.md`](docs/SUPABASE_SCHEMA.md).
-
 ### ⚙️ System Logic (New Features)
 
 *   **Smart Scheduling**: Daily heating slots are calculated based on the cheapest Octopus Agile rates.
@@ -76,7 +71,6 @@ Ensure your `.env` (or Railway variables) includes:
 *   For local Tuya control, set `TUYA_LOCAL_KEY_MAIN`, `TUYA_LOCAL_KEY_SECOND`, and optionally `TUYA_DEVICE_IP_MAIN`, `TUYA_DEVICE_IP_SECOND`, `TUYA_PROTOCOL_VERSION_MAIN`, `TUYA_PROTOCOL_VERSION_SECOND`, `TUYA_LOCAL_DPS_MAIN`, `TUYA_LOCAL_DPS_SECOND`.
 *   Local Tuya control only works when this Python controller runs on the same LAN as the heater switches, unless the LAN is reachable over a VPN/tunnel.
 *   Optional Shelly off-peak relay control: set `SECOND_HEATER_CONTROL=shelly`, `SHELLY_RELAY_DEVICE_ID`, and `SHELLY_RELAY_CHANNEL_SECOND=0` only after the Shelly Pro 1 is physically verified to switch the storage heater or its contactor. Keep the existing energy meter under `SHELLY_METER_DEVICE_ID`.
-*   Give Railway a stable `TELEMETRY_SITE_ID` and set Vercel's `NEXT_PUBLIC_TELEMETRY_SITE_ID` and `NEXT_PUBLIC_SHELLY_METER_DEVICE_ID` to the same site/meter values used by Railway. When both public values are set, live readings, history totals, and downsampled charts are restricted to that property and meter. Leaving them unset temporarily preserves the legacy unscoped queries during rollout.
 *   `SMART_COOLDOWN_ENABLED=false` (default). Set to `true` only if low Shelly power should turn the storage heater off for cooldown during an active slot.
 *   `STRICT_TIME_CHECK=false` (default). Set to `true` only if the controller should abort when NTP is unreachable.
 *   (Optional, for landing page pilot lead notifications) `RESEND_API_KEY`, `LEADS_FROM_EMAIL`, `LEADS_TO_EMAIL`
