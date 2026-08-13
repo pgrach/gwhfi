@@ -5,13 +5,18 @@ import { supabase } from "@/lib/supabase"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Zap, Activity, Flame } from "lucide-react"
+import {
+    PUBLIC_METER_DEVICE_ID,
+    PUBLIC_TELEMETRY_SITE_ID,
+    siteOrLegacyFilter,
+} from "@/lib/telemetry-scope"
 
 interface Reading {
     device_id: string
     channel: number
-    power_w: number
-    voltage: number
-    energy_total_wh: number
+    power_w: number | null
+    voltage: number | null
+    energy_total_wh: number | null
     created_at: string
 }
 
@@ -27,9 +32,9 @@ interface HeaterCardProps {
     readingAge: string
 }
 
-// The worker emits an idle heartbeat just after 15 minutes. Allow one polling
-// interval of headroom so a healthy, idle meter does not briefly flap stale.
-const STALE_AFTER_MS = 20 * 60 * 1000
+// Phase 1 records every channel once per minute. Allow several missed polls for
+// transient cloud latency while still making a stopped collector visible.
+const STALE_AFTER_MS = 5 * 60 * 1000
 
 function getChannelStatus(
     reading: Reading | undefined,
@@ -44,7 +49,13 @@ function getChannelStatus(
     if (!Number.isFinite(timestamp)) return "unavailable"
 
     const ageMs = nowMs - timestamp
-    return ageMs >= -60_000 && ageMs < STALE_AFTER_MS ? "online" : "stale"
+    if (!(ageMs >= -60_000 && ageMs < STALE_AFTER_MS)) return "stale"
+
+    // A fresh poll can deliberately retain an invalid source measurement as
+    // NULL plus quality metadata. Freshness is not evidence of usable power.
+    return typeof reading.power_w === "number" && Number.isFinite(reading.power_w)
+        ? "online"
+        : "unavailable"
 }
 
 function formatReadingAge(reading: Reading | undefined, nowMs: number) {
@@ -182,19 +193,25 @@ export function LiveStatus() {
 
         const fetchLive = async () => {
             try {
+                const latestReadingQuery = (channel: 0 | 1) => {
+                    let query = supabase
+                        .from("energy_readings")
+                        .select("*")
+                        .eq("channel", channel)
+
+                    if (PUBLIC_METER_DEVICE_ID && PUBLIC_TELEMETRY_SITE_ID) {
+                        query = query.eq("device_id", PUBLIC_METER_DEVICE_ID)
+                        query = query.or(siteOrLegacyFilter(PUBLIC_TELEMETRY_SITE_ID))
+                    }
+
+                    return query
+                        .order("created_at", { ascending: false })
+                        .limit(1)
+                }
+
                 const [channel0Response, channel1Response] = await Promise.all([
-                    supabase
-                        .from("energy_readings")
-                        .select("*")
-                        .eq("channel", 0)
-                        .order("created_at", { ascending: false })
-                        .limit(1),
-                    supabase
-                        .from("energy_readings")
-                        .select("*")
-                        .eq("channel", 1)
-                        .order("created_at", { ascending: false })
-                        .limit(1),
+                    latestReadingQuery(0),
+                    latestReadingQuery(1),
                 ])
 
                 if (cancelled) return
@@ -239,8 +256,8 @@ export function LiveStatus() {
 
     // Determine if heaters are ON (power > 100W threshold)
     // Each channel must have its own fresh, successful reading.
-    const isPeakOn = peakIsFresh && (main?.power_w ?? 0) > 100
-    const isOffPeakOn = offPeakIsFresh && (second?.power_w ?? 0) > 100
+    const isPeakOn = peakIsFresh && typeof main?.power_w === "number" && main.power_w > 100
+    const isOffPeakOn = offPeakIsFresh && typeof second?.power_w === "number" && second.power_w > 100
 
     // Max power for progress bar (3kW heaters)
     const MAX_POWER = 3200
@@ -262,18 +279,18 @@ export function LiveStatus() {
 
             <div className="grid gap-4 md:grid-cols-2">
                 <PeakHeaterCard
-                    power={peakIsFresh ? (main?.power_w ?? 0) : null}
-                    voltage={peakIsFresh ? (main?.voltage ?? 0) : null}
-                    energy={peakIsFresh ? (main?.energy_total_wh ?? 0) : null}
+                    power={peakIsFresh ? (main?.power_w ?? null) : null}
+                    voltage={peakIsFresh ? (main?.voltage ?? null) : null}
+                    energy={peakIsFresh ? (main?.energy_total_wh ?? null) : null}
                     isOn={isPeakOn}
                     maxPower={MAX_POWER}
                     status={peakStatus}
                     readingAge={formatReadingAge(main, nowMs)}
                 />
                 <OffPeakHeaterCard
-                    power={offPeakIsFresh ? (second?.power_w ?? 0) : null}
-                    voltage={offPeakIsFresh ? (second?.voltage ?? 0) : null}
-                    energy={offPeakIsFresh ? (second?.energy_total_wh ?? 0) : null}
+                    power={offPeakIsFresh ? (second?.power_w ?? null) : null}
+                    voltage={offPeakIsFresh ? (second?.voltage ?? null) : null}
+                    energy={offPeakIsFresh ? (second?.energy_total_wh ?? null) : null}
                     isOn={isOffPeakOn}
                     maxPower={MAX_POWER}
                     status={offPeakStatus}

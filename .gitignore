@@ -31,3 +31,7 @@ build/
 
 # Temp repos
 v0-landing-page/
+
+# Supabase CLI state
+supabase/.branches/
+supabase/.temp/
