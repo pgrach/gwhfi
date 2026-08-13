@@ -32,9 +32,10 @@ class FakeResponse:
 
 
 class ShellyManagerTests(unittest.TestCase):
-    def make_manager(self, response, monotonic=None, sleeper=None):
+    def make_manager(self, response, monotonic=None, sleeper=None, request_gate=None):
         session = Mock()
         session.post.return_value = response
+        request_gate = request_gate or Mock()
         patches = (
             patch.object(Config, "SHELLY_SERVER", "https://example.shelly.cloud"),
             patch.object(Config, "SHELLY_AUTH_KEY", "secret"),
@@ -48,6 +49,7 @@ class ShellyManagerTests(unittest.TestCase):
             session=session,
             monotonic=monotonic,
             sleeper=sleeper,
+            request_gate=request_gate,
         ), session
 
     def test_reads_gen2_relay_status(self):
@@ -127,15 +129,7 @@ class ShellyManagerTests(unittest.TestCase):
         self.assertFalse(manager.get_relay_status(0)["success"])
 
     def test_rate_limits_status_and_control_requests_together(self):
-        now = [100.0]
-        sleeps = []
-
-        def monotonic():
-            return now[0]
-
-        def sleeper(seconds):
-            sleeps.append(seconds)
-            now[0] += seconds
+        request_gate = Mock()
 
         manager, session = self.make_manager(
             FakeResponse([{
@@ -143,8 +137,7 @@ class ShellyManagerTests(unittest.TestCase):
                 "online": 1,
                 "status": {"switch:0": {"id": 0, "output": False}},
             }]),
-            monotonic=monotonic,
-            sleeper=sleeper,
+            request_gate=request_gate,
         )
 
         self.assertTrue(manager.get_relay_status(0)["success"])
@@ -152,11 +145,7 @@ class ShellyManagerTests(unittest.TestCase):
         self.assertTrue(manager.set_relay(channel=0, turn_on=False)["success"])
 
         self.assertEqual(session.post.call_count, 2)
-        self.assertEqual(len(sleeps), 1)
-        self.assertAlmostEqual(
-            sleeps[0],
-            ShellyManager.CLOUD_MIN_REQUEST_INTERVAL_SECONDS,
-        )
+        self.assertEqual(request_gate.wait_for_turn.call_count, 2)
 
 
 if __name__ == "__main__":

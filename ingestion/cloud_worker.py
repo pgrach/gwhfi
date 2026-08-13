@@ -17,6 +17,11 @@ from datetime import datetime, timezone
 import requests
 from dotenv import load_dotenv
 
+try:
+    from .services.shelly_rate_gate import SharedShellyRequestGate
+except ImportError:  # Direct execution: python ingestion/cloud_worker.py
+    from services.shelly_rate_gate import SharedShellyRequestGate
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -53,6 +58,7 @@ RPC_HEADERS = {
 
 # This state is informational only and is committed after a successful write.
 last_readings = {}
+SHELLY_REQUEST_GATE = SharedShellyRequestGate()
 
 
 def utc_now():
@@ -148,10 +154,17 @@ def get_shelly_status(device_id):
     """Return ``(status, metadata)`` without manufacturing measurements."""
     url = f"{SHELLY_SERVER}/device/status"
     payload = {"id": device_id, "auth_key": SHELLY_AUTH_KEY}
-    request_started = utc_now()
-    monotonic_started = time.monotonic()
+    request_started = None
+    monotonic_started = None
     received_at = None
+    response = None
     try:
+        # Reserve the shared account-level request slot before recording the
+        # actual outbound start. scheduled_at -> request_started_at therefore
+        # exposes any queueing delay instead of folding it into HTTP latency.
+        SHELLY_REQUEST_GATE.wait_for_turn()
+        request_started = utc_now()
+        monotonic_started = time.monotonic()
         response = requests.post(url, data=payload, timeout=SHELLY_TIMEOUT_SECONDS)
         received_at = utc_now()
         latency_ms = round((time.monotonic() - monotonic_started) * 1000)
@@ -190,16 +203,31 @@ def get_shelly_status(device_id):
         }
     except Exception as exc:
         logger.error("Failed to fetch Shelly status: %s", exc)
+        http_status = getattr(getattr(exc, "response", None), "status_code", None)
+        if http_status is None and response is not None:
+            http_status = getattr(response, "status_code", None)
+        raw_payload = None
+        if response is not None:
+            try:
+                raw_payload = response.json()
+            except (TypeError, ValueError):
+                pass
         return None, {
-            "request_started_at": request_started,
+            "request_started_at": request_started or utc_now(),
             # A transport failure is not a received response. If parsing or
             # HTTP validation failed after receipt, retain the actual instant.
             "received_at": received_at,
-            "latency_ms": round((time.monotonic() - monotonic_started) * 1000),
-            "http_status": getattr(getattr(exc, "response", None), "status_code", None),
-            "error_code": type(exc).__name__,
+            "latency_ms": (
+                round((time.monotonic() - monotonic_started) * 1000)
+                if monotonic_started is not None
+                else None
+            ),
+            "http_status": http_status,
+            "error_code": (
+                "shelly_rate_limited" if http_status == 429 else type(exc).__name__
+            ),
             "error_message": str(exc),
-            "raw_payload": None,
+            "raw_payload": raw_payload,
         }
 
 

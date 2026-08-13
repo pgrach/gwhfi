@@ -28,6 +28,9 @@ the legacy schema.
 - `power_w`, `voltage`, and `energy_total_wh` are nullable. A missing or invalid
   source measurement is stored as `NULL` with a `quality_flags` explanation; it
   must not be converted to zero.
+- Those measurement columns use double precision. The follow-up precision
+  migration upgrades legacy `real` columns so normal decimal readings are not
+  rounded differently from the atomic idempotency check.
 - New versioned rows carry `site_id`, `poll_id`, source/receipt timestamps,
   collector identity, sample reason, quality flags, and schema version.
 - The collector calls `ingest_telemetry_poll(p_poll, p_readings)` for both

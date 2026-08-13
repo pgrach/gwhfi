@@ -64,6 +64,7 @@ class CloudWorkerTests(unittest.TestCase):
         self.worker.COLLECTOR_ID = ENV["TELEMETRY_COLLECTOR_ID"]
         self.worker.SITE_ID = ENV["TELEMETRY_SITE_ID"]
         self.worker.last_readings.clear()
+        self.worker.SHELLY_REQUEST_GATE = unittest.mock.Mock()
 
     def test_builds_fixed_rate_rows_with_shared_poll_and_aware_timestamp(self):
         observed = datetime(2026, 8, 13, 12, 0, tzinfo=timezone.utc)
@@ -294,6 +295,32 @@ class CloudWorkerTests(unittest.TestCase):
         payload = post.call_args_list[1].kwargs["json"]
         self.assertIsNone(payload["p_poll"]["received_at"])
         self.assertEqual(payload["p_poll"]["outcome"], "source_error")
+        self.assertEqual(payload["p_readings"], [])
+
+    def test_rate_limit_is_one_source_error_without_shelly_retry(self):
+        rate_limited = Response({"error": "too many requests"}, status_code=429)
+        accepted = Response(status_code=201)
+        with patch.object(
+            self.worker.requests,
+            "post",
+            side_effect=[rate_limited, accepted],
+        ) as post:
+            result = self.worker.process_reading(
+                poll_id="88888888-8888-4888-8888-888888888888"
+            )
+
+        self.assertFalse(result)
+        self.assertEqual(post.call_count, 2)
+        self.assertEqual(self.worker.SHELLY_REQUEST_GATE.wait_for_turn.call_count, 1)
+        self.assertEqual(
+            sum("/device/status" in call.args[0] for call in post.call_args_list),
+            1,
+        )
+        payload = post.call_args_list[1].kwargs["json"]
+        self.assertEqual(payload["p_poll"]["outcome"], "source_error")
+        self.assertEqual(payload["p_poll"]["http_status"], 429)
+        self.assertEqual(payload["p_poll"]["error_code"], "shelly_rate_limited")
+        self.assertEqual(payload["p_poll"]["raw_payload"], {"error": "too many requests"})
         self.assertEqual(payload["p_readings"], [])
 
     def test_main_fails_fast_when_required_configuration_is_missing(self):

@@ -6,6 +6,10 @@ const migration = readFileSync(
     new URL("../supabase/migrations/20260813101500_phase1_telemetry_lineage.sql", import.meta.url),
     "utf8",
 )
+const numericPrecisionMigration = readFileSync(
+    new URL("../supabase/migrations/20260813182500_fix_telemetry_numeric_precision.sql", import.meta.url),
+    "utf8",
+)
 
 test("telemetry ingestion is atomic, validated, and service-only", () => {
     assert.match(
@@ -50,4 +54,13 @@ test("scoped telemetry has an index for bounded time scans across channels", () 
         migration,
         /on public\.energy_readings \(site_id, device_id, created_at desc, channel\)/,
     )
+})
+
+test("legacy float4 telemetry columns are upgraded to double precision", () => {
+    for (const column of ["power_w", "voltage", "energy_total_wh"]) {
+        assert.match(
+            numericPrecisionMigration,
+            new RegExp(`alter column ${column} type double precision`, "i"),
+        )
+    }
 })

@@ -25,6 +25,8 @@ measured tank temperature and it is not proof that hot water was used.
 ## Phase 1 principles
 
 - Railway runs the one authoritative telemetry collector.
+- The collector and heater controller share one process-safe Shelly Cloud
+  request gate, so their requests cannot violate the account rate limit.
 - Both meter channels are observed on a fixed cadence, including measured 0 W.
 - A poll identifier and common timestamps link channel readings from the same
   Shelly response.

@@ -3,13 +3,24 @@ import logging
 import threading
 import time
 from config import Config
+from services.shelly_rate_gate import (
+    DEFAULT_MIN_REQUEST_INTERVAL_SECONDS,
+    SharedShellyRequestGate,
+    ShellyRateGateError,
+)
 
 logger = logging.getLogger(__name__)
 
 class ShellyManager:
-    CLOUD_MIN_REQUEST_INTERVAL_SECONDS = 1.05
+    CLOUD_MIN_REQUEST_INTERVAL_SECONDS = DEFAULT_MIN_REQUEST_INTERVAL_SECONDS
 
-    def __init__(self, session=None, monotonic=None, sleeper=None):
+    def __init__(
+        self,
+        session=None,
+        monotonic=None,
+        sleeper=None,
+        request_gate=None,
+    ):
         self.server = (Config.SHELLY_SERVER or "").rstrip('/')
         if self.server and not self.server.startswith(("http://", "https://")):
             self.server = f"https://{self.server}"
@@ -20,7 +31,11 @@ class ShellyManager:
         self._monotonic = monotonic or time.monotonic
         self._sleeper = sleeper or time.sleep
         self._request_lock = threading.Lock()
-        self._last_request_at = None
+        self._request_gate = request_gate or SharedShellyRequestGate(
+            min_interval_seconds=self.CLOUD_MIN_REQUEST_INTERVAL_SECONDS,
+            clock=self._monotonic,
+            sleeper=self._sleeper,
+        )
 
         self.monitoring_enabled = bool(self.server and self.auth_key and self.meter_device_id)
         self.control_enabled = bool(self.server and self.auth_key and self.relay_device_id)
@@ -34,17 +49,8 @@ class ShellyManager:
     def _post(self, url, **kwargs):
         """Issue one Cloud API request while respecting the account rate limit."""
         with self._request_lock:
-            if self._last_request_at is not None:
-                elapsed = self._monotonic() - self._last_request_at
-                wait_seconds = self.CLOUD_MIN_REQUEST_INTERVAL_SECONDS - elapsed
-                if wait_seconds > 0:
-                    self._sleeper(wait_seconds)
-
-            try:
-                return self.session.post(url, **kwargs)
-            finally:
-                # Failed requests still count toward the service's request rate.
-                self._last_request_at = self._monotonic()
+            self._request_gate.wait_for_turn()
+            return self.session.post(url, **kwargs)
 
     def _get_device(self, device_id):
         """Fetch one device through Shelly Cloud Control API v2."""
@@ -64,7 +70,7 @@ class ShellyManager:
             if isinstance(data, list) and data:
                 return data[0]
             logger.error("Shelly Cloud returned no device data for the requested device.")
-        except requests.RequestException as exc:
+        except (requests.RequestException, ShellyRateGateError) as exc:
             # Do not log the prepared URL: it contains the cloud authorization key.
             status = getattr(getattr(exc, "response", None), "status_code", None)
             logger.error("Shelly Cloud status request failed (HTTP %s).", status or "unavailable")
@@ -209,7 +215,7 @@ class ShellyManager:
                 payload.get("toggle_after"),
             )
             return {"success": True}
-        except requests.RequestException as exc:
+        except (requests.RequestException, ShellyRateGateError) as exc:
             status = getattr(getattr(exc, "response", None), "status_code", None)
             logger.error(
                 "Shelly relay command failed for channel %s (HTTP %s).",
