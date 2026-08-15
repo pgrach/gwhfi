@@ -119,7 +119,7 @@ export function CurrentRate() {
                 : "bg-gradient-to-br from-purple-500/10 to-pink-500/10 border-purple-500/20"
             }`}>
             <CardContent className="p-4">
-                <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+                <div className="flex flex-col lg:flex-row lg:items-center gap-4">
                     {/* Current Rate */}
                     <div className="flex items-center gap-4 flex-1">
                         <div className={`flex items-center justify-center w-12 h-12 rounded-xl ${isNegative
@@ -156,18 +156,18 @@ export function CurrentRate() {
                     </div>
 
                     {/* Divider */}
-                    <div className="hidden sm:block w-px h-12 bg-border"></div>
+                    <div className="hidden lg:block w-px h-12 bg-border"></div>
 
                     {/* Daily Average */}
                     <div className="flex items-center gap-4">
-                        <div className="text-center sm:text-left">
+                        <div className="text-left">
                             <p className="text-sm text-muted-foreground font-medium">Agile Daily Average</p>
                             <span className="text-lg font-semibold">{avgRate.toFixed(2)}p/kWh</span>
                         </div>
                     </div>
 
                     {/* Divider */}
-                    <div className="hidden sm:block w-px h-12 bg-border"></div>
+                    <div className="hidden lg:block w-px h-12 bg-border"></div>
 
                     {/* Next Smart Slot */}
                     <div className="flex items-center gap-3">
