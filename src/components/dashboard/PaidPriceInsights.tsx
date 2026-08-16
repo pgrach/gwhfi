@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { isHistoricalCalendarDate } from "@/lib/date-selection"
 import { getUKDateString } from "@/lib/date-utils"
+import { Sparkles } from "lucide-react"
 
 interface PaidPriceWindow {
     avg_paid_ppkwh: number | null
@@ -91,42 +92,45 @@ export function PaidPriceInsights() {
         }
     }, [selectedDate])
 
+    const windows: Array<{ label: string; window: PaidPriceWindow | null | undefined }> = [
+        ...(stats?.selected_day
+            ? [{ label: `Selected (${formatDateLabel(stats.selected_day.date)})`, window: stats.selected_day.window }]
+            : []),
+        { label: "Yesterday", window: stats?.yesterday },
+        { label: "Last 7 Days", window: stats?.last7d },
+        { label: "Last 30 Days", window: stats?.last30d },
+    ]
+
     return (
         <Card>
             <CardHeader className="pb-3">
-                <CardTitle className="text-xl">Average Price You Paid (Heaters)</CardTitle>
+                <CardTitle className="font-display text-xl font-extrabold">Average Price You Paid (Heaters)</CardTitle>
                 <CardDescription>
                     kWh-weighted unit price using actual heater consumption and Agile tariff intervals.
                 </CardDescription>
             </CardHeader>
             <CardContent>
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                    {stats?.selected_day && (
-                        <div className="rounded-lg border bg-card p-4">
-                            <p className="text-sm text-muted-foreground">Selected ({formatDateLabel(stats.selected_day.date)})</p>
-                            <p className="text-2xl font-semibold mt-1">
-                                {loading ? "…" : formatWindowValue(stats.selected_day.window)}
-                            </p>
-                        </div>
-                    )}
-                    <div className="rounded-lg border bg-card p-4">
-                        <p className="text-sm text-muted-foreground">Yesterday</p>
-                        <p className="text-2xl font-semibold mt-1">
-                            {loading ? "…" : formatWindowValue(stats?.yesterday)}
-                        </p>
-                    </div>
-                    <div className="rounded-lg border bg-card p-4">
-                        <p className="text-sm text-muted-foreground">Last 7 Days</p>
-                        <p className="text-2xl font-semibold mt-1">
-                            {loading ? "…" : formatWindowValue(stats?.last7d)}
-                        </p>
-                    </div>
-                    <div className="rounded-lg border bg-card p-4">
-                        <p className="text-sm text-muted-foreground">Last 30 Days</p>
-                        <p className="text-2xl font-semibold mt-1">
-                            {loading ? "…" : formatWindowValue(stats?.last30d)}
-                        </p>
-                    </div>
+                    {windows.map(({ label, window }) => {
+                        const earning = window?.avg_paid_ppkwh != null && window.avg_paid_ppkwh <= 0
+                        return (
+                            <div
+                                key={label}
+                                className={`rounded-lg border p-4 ${earning ? "border-live/40 bg-live/10" : "border-border/60 bg-secondary/50"}`}
+                            >
+                                <p className="text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-foreground">{label}</p>
+                                <p className={`text-2xl font-bold mt-1 font-mono tabular-nums ${earning ? "text-live" : "text-rust"}`}>
+                                    {loading ? "…" : formatWindowValue(window)}
+                                </p>
+                                {earning && !loading && (
+                                    <p className="mt-1 flex items-center gap-1 text-xs font-medium text-live">
+                                        <Sparkles className="w-3 h-3" />
+                                        You got paid to heat
+                                    </p>
+                                )}
+                            </div>
+                        )
+                    })}
                 </div>
             </CardContent>
         </Card>

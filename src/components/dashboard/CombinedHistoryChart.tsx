@@ -589,13 +589,13 @@ export function CombinedHistoryChart() {
             <CardHeader className="flex flex-col space-y-4 sm:flex-row sm:items-center sm:justify-between sm:space-y-0 pb-2">
                 <div className="space-y-1">
                     <div className="flex items-center gap-3">
-                        <CardTitle className="text-xl sm:text-2xl">Usage & Price History</CardTitle>
+                        <CardTitle className="font-display text-xl sm:text-2xl font-extrabold">Usage & Price History</CardTitle>
                         {lastUpdate && (
                             <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${systemStatus === "active"
-                                ? "bg-green-500/10 text-green-600 border border-green-500/20"
+                                ? "bg-live/10 text-live border border-live/20"
                                 : "bg-orange-500/10 text-orange-600 border border-orange-500/20"
                                 }`}>
-                                <div className={`w-1.5 h-1.5 rounded-full ${systemStatus === "active" ? "bg-green-500" : "bg-orange-500"
+                                <div className={`w-1.5 h-1.5 rounded-full ${systemStatus === "active" ? "bg-live" : "bg-orange-500"
                                     } animate-pulse`} />
                                 <span>Updated {formatTimeAgo(lastUpdate)}</span>
                             </div>
@@ -614,11 +614,11 @@ export function CombinedHistoryChart() {
                         <span>Total heater usage in selected range:</span>
                         <span className="hidden sm:inline text-muted-foreground mx-2">|</span>
                         <div className="flex gap-4 sm:gap-0">
-                            <span className="text-blue-500 font-bold whitespace-nowrap">
+                            <span className="text-teal font-bold whitespace-nowrap">
                                 Boost: {totals.peak === null ? "—" : `${totals.peak.toFixed(2)} kWh`}
                             </span>
                             <span className="hidden sm:inline text-muted-foreground mx-2">|</span>
-                            <span className="text-green-600 font-bold whitespace-nowrap">
+                            <span className="text-teal-glow font-bold whitespace-nowrap">
                                 Storage: {totals.offPeak === null ? "—" : `${totals.offPeak.toFixed(2)} kWh`}
                             </span>
                         </div>
@@ -667,10 +667,10 @@ export function CombinedHistoryChart() {
             <CardContent className="pl-2">
                 <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 px-2 text-xs text-muted-foreground">
                     <span className="inline-flex items-center gap-1.5">
-                        <span className="h-3 w-5 rounded-sm border border-emerald-500/30 bg-emerald-500/10" />
+                        <span className="h-3 w-5 rounded-sm border border-teal/30 bg-teal/10" />
                         Scheduled storage-heater ON window
                     </span>
-                    <span>Filled blue/green traces show measured power draw</span>
+                    <span>Filled traces show measured power draw; the rate line is the live Octopus Agile price</span>
                 </div>
                 <div className="h-[400px] w-full">
                     <ResponsiveContainer width="100%" height="100%">
@@ -684,9 +684,9 @@ export function CombinedHistoryChart() {
                                     x1={period.start}
                                     x2={period.end}
                                     yAxisId="left"
-                                    fill="#10b981"
+                                    fill="var(--teal)"
                                     fillOpacity={0.08}
-                                    stroke="#10b981"
+                                    stroke="var(--teal)"
                                     strokeOpacity={0.22}
                                 />
                             ))}
@@ -696,13 +696,13 @@ export function CombinedHistoryChart() {
                                 <ReferenceLine
                                     x={currentTimestamp}
                                     yAxisId="left"
-                                    stroke="#3b82f6"
+                                    stroke="var(--cold)"
                                     strokeWidth={2}
                                     strokeDasharray="4 2"
                                     label={{
                                         value: "NOW",
                                         position: "top",
-                                        fill: "#3b82f6",
+                                        fill: "var(--cold)",
                                         fontSize: 11,
                                         fontWeight: 700
                                     }}
@@ -714,7 +714,7 @@ export function CombinedHistoryChart() {
                                 type="number"
                                 domain={([dataMin, dataMax]) => [dataMin, dataMax + chartBucketMs]}
                                 scale="time"
-                                stroke="#888888"
+                                stroke="var(--muted-foreground)"
                                 fontSize={12}
                                 tickLine={false}
                                 axisLine={false}
@@ -727,31 +727,32 @@ export function CombinedHistoryChart() {
                                 })}
                                 minTickGap={(viewMode === "today" || viewMode === "tomorrow" || viewMode === "custom") ? 30 : 60}
                             />
-                            {/* Left Axis: Price */}
+                            {/* Left Axis: Price. Rust is the single signal accent, reserved for
+                                the Octopus Agile rate everywhere it appears. */}
                             <YAxis
                                 yAxisId="left"
-                                stroke="#f050f8"
+                                stroke="var(--rust)"
                                 fontSize={12}
                                 tickLine={false}
                                 axisLine={false}
                                 domain={[0, 'dataMax + 5']}
                                 tickFormatter={(value) => `${value}p`}
-                                label={{ value: 'Agile Rate (p/kWh)', angle: -90, position: 'insideLeft', fill: '#f050f8' }}
+                                label={{ value: 'Agile Rate (p/kWh)', angle: -90, position: 'insideLeft', fill: 'var(--rust)' }}
                             />
-                            {/* Right Axis: Power */}
+                            {/* Right Axis: Power — teal carries data, per brand spec. */}
                             <YAxis
                                 yAxisId="right"
                                 orientation="right"
-                                stroke="#82ca9d"
+                                stroke="var(--teal)"
                                 fontSize={12}
                                 tickLine={false}
                                 axisLine={false}
                                 tickFormatter={(value) => `${value}W`}
-                                label={{ value: 'Power (W)', angle: 90, position: 'insideRight', fill: '#82ca9d' }}
+                                label={{ value: 'Power (W)', angle: 90, position: 'insideRight', fill: 'var(--teal)' }}
                             />
 
                             <Tooltip
-                                contentStyle={{ backgroundColor: "#1f2937", border: "none", color: "#fff" }}
+                                contentStyle={{ backgroundColor: "var(--card)", border: "1px solid var(--border)", color: "var(--card-foreground)" }}
                                 labelFormatter={(value) => new Date(Number(value)).toLocaleString([], {
                                     timeZone: 'Europe/London',
                                     month: isDayView ? undefined : 'numeric',
@@ -766,7 +767,7 @@ export function CombinedHistoryChart() {
                                         return [
                                             <div key="rate">
                                                 <span>{Number(value).toFixed(2)}p</span>
-                                                {point?.isScheduled && <span className="ml-2 text-green-400 font-bold">● Scheduled</span>}
+                                                {point?.isScheduled && <span className="ml-2 text-teal font-bold">● Scheduled</span>}
                                             </div>,
                                             name
                                         ]
@@ -776,28 +777,31 @@ export function CombinedHistoryChart() {
                             />
                             <Legend />
 
-                            {/* Rate Line (Left Axis) */}
+                            {/* Rate Line (Left Axis) — rust is the Octopus Agile rate signal, kept
+                                consistent with the live-rate figure above the chart. */}
                             <Line
                                 yAxisId="left"
                                 type="stepAfter"
                                 dataKey="rate"
                                 name="Rate (p/kWh)"
-                                stroke="#f050f8"
+                                stroke="var(--rust)"
                                 strokeWidth={2}
                                 dot={false}
                                 connectNulls
                             />
 
-                            {/* Filled step traces make real heater cycling readable. */}
+                            {/* Filled step traces make real heater cycling readable. Both heaters
+                                are the same telemetry "data" stream per brand spec, so they share
+                                the teal family and differ only by shade. */}
                             <Area
                                 yAxisId="right"
                                 type="stepAfter"
                                 dataKey="power_0"
                                 name="Boost Heater (W)"
-                                stroke="#2563eb"
+                                stroke="var(--teal)"
                                 strokeWidth={2}
-                                fill="#2563eb"
-                                fillOpacity={0.12}
+                                fill="var(--teal)"
+                                fillOpacity={0.14}
                                 baseValue={0}
                                 dot={false}
                             />
@@ -806,10 +810,10 @@ export function CombinedHistoryChart() {
                                 type="stepAfter"
                                 dataKey="power_1"
                                 name="Storage Heater (W)"
-                                stroke="#16a34a"
+                                stroke="var(--teal-glow)"
                                 strokeWidth={2}
-                                fill="#16a34a"
-                                fillOpacity={0.18}
+                                fill="var(--teal-glow)"
+                                fillOpacity={0.22}
                                 baseValue={0}
                                 dot={false}
                             />

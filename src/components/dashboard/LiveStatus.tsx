@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 import { supabase } from "@/lib/supabase"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Zap, Activity, Flame } from "lucide-react"
+import { Zap, Activity, Flame, type LucideIcon } from "lucide-react"
 import {
     PUBLIC_METER_DEVICE_ID,
     PUBLIC_TELEMETRY_SITE_ID,
@@ -23,6 +23,8 @@ interface Reading {
 type ChannelStatus = "loading" | "online" | "stale" | "error" | "unavailable"
 
 interface HeaterCardProps {
+    name: string
+    icon: LucideIcon
     power: number | null
     voltage: number | null
     energy: number | null
@@ -85,98 +87,58 @@ function ChannelStatusBadge({ status }: { status: ChannelStatus }) {
     return <Badge variant="destructive" className="text-xs">NO DATA</Badge>
 }
 
-// Separate components for each heater type to avoid dynamic class issues
-function PeakHeaterCard({ power, voltage, energy, isOn, maxPower, status, readingAge }: HeaterCardProps) {
+// Both heaters are the same "hot water" thermal value stream, so they share
+// one treatment: Live Signal marks an active/pulsing ON state, per brand spec.
+function HeaterCard({ name, icon: Icon, power, voltage, energy, isOn, maxPower, status, readingAge }: HeaterCardProps) {
+    const label = "text-[10px] font-mono uppercase tracking-[0.14em] text-muted-foreground"
     return (
-        <Card className={`relative overflow-hidden transition-all duration-500 ${isOn ? "ring-2 ring-blue-500 shadow-lg shadow-blue-500/20" : ""
+        <Card className={`relative overflow-hidden transition-all duration-500 ${isOn ? "ring-2 ring-live shadow-lg shadow-live/20" : ""
             }`}>
-            {isOn && (
-                <div className="absolute inset-0 bg-gradient-to-br from-blue-500/10 to-transparent animate-pulse" />
-            )}
-
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 relative">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <div className="flex items-center gap-2">
-                    <CardTitle className="text-sm font-medium">Heater 1 (Boost)</CardTitle>
+                    <CardTitle className="text-sm font-medium">{name}</CardTitle>
                     {isOn ? (
-                        <Badge className="bg-blue-500 hover:bg-blue-600 animate-pulse text-xs">
+                        <Badge className="bg-live text-live-foreground hover:bg-live/90 animate-pulse text-xs">
                             <Flame className="w-3 h-3 mr-1" />
                             ON
                         </Badge>
                     ) : <ChannelStatusBadge status={status} />}
                 </div>
-                <div className={`p-2 rounded-lg ${isOn ? "bg-blue-500 text-white" : "bg-muted"}`}>
-                    <Zap className="h-4 w-4" />
+                <div className={`p-2 rounded-lg ${isOn ? "bg-live text-live-foreground" : "bg-secondary text-muted-foreground"}`}>
+                    <Icon className="h-4 w-4" />
                 </div>
             </CardHeader>
 
-            <CardContent className="relative">
-                <div className="flex items-end gap-2">
-                    <span className={`text-3xl font-bold tabular-nums ${isOn ? "text-blue-500" : ""}`}>
-                        {power === null ? "—" : power.toFixed(0)}
-                    </span>
-                    <span className="text-lg text-muted-foreground mb-1">W</span>
+            <CardContent>
+                <div className="grid grid-cols-3 gap-2">
+                    <div className="rounded-md bg-secondary/60 px-3 py-2">
+                        <span className={`block ${label}`}>Power</span>
+                        <span className="text-sm font-bold font-mono tabular-nums">
+                            {power === null ? "—" : `${power.toFixed(0)}W`}
+                        </span>
+                    </div>
+                    <div className="rounded-md bg-secondary/60 px-3 py-2">
+                        <span className={`block ${label}`}>Voltage</span>
+                        <span className="text-sm font-bold font-mono tabular-nums">
+                            {voltage === null ? "—" : `${voltage.toFixed(1)}V`}
+                        </span>
+                    </div>
+                    <div className="rounded-md bg-secondary/60 px-3 py-2">
+                        <span className={`block ${label}`}>Total</span>
+                        <span className="text-sm font-bold font-mono tabular-nums">
+                            {energy === null ? "—" : `${(energy / 1000).toFixed(1)}kWh`}
+                        </span>
+                    </div>
                 </div>
 
-                <div className="mt-3 h-2 bg-muted rounded-full overflow-hidden">
+                <div className="mt-3 h-1.5 bg-muted rounded-full overflow-hidden">
                     <div
-                        className={`h-full rounded-full transition-all duration-500 ${isOn ? "bg-gradient-to-r from-blue-400 to-blue-600" : "bg-muted-foreground/30"
-                            }`}
+                        className={`h-full rounded-full transition-all duration-500 ${isOn ? "bg-live" : "bg-muted-foreground/30"}`}
                         style={{ width: `${power === null ? 0 : Math.min((power / maxPower) * 100, 100)}%` }}
                     />
                 </div>
 
-                <p className="text-xs text-muted-foreground mt-2">
-                    {voltage === null ? "—" : `${voltage.toFixed(1)}V`} • {energy === null ? "—" : `${(energy / 1000).toFixed(1)} kWh total`}
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">{status === "error" ? "Latest telemetry request failed" : readingAge}</p>
-            </CardContent>
-        </Card>
-    )
-}
-
-function OffPeakHeaterCard({ power, voltage, energy, isOn, maxPower, status, readingAge }: HeaterCardProps) {
-    return (
-        <Card className={`relative overflow-hidden transition-all duration-500 ${isOn ? "ring-2 ring-green-500 shadow-lg shadow-green-500/20" : ""
-            }`}>
-            {isOn && (
-                <div className="absolute inset-0 bg-gradient-to-br from-green-500/10 to-transparent animate-pulse" />
-            )}
-
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 relative">
-                <div className="flex items-center gap-2">
-                    <CardTitle className="text-sm font-medium">Heater 2 (Storage)</CardTitle>
-                    {isOn ? (
-                        <Badge className="bg-green-500 hover:bg-green-600 animate-pulse text-xs">
-                            <Flame className="w-3 h-3 mr-1" />
-                            ON
-                        </Badge>
-                    ) : <ChannelStatusBadge status={status} />}
-                </div>
-                <div className={`p-2 rounded-lg ${isOn ? "bg-green-500 text-white" : "bg-muted"}`}>
-                    <Activity className="h-4 w-4" />
-                </div>
-            </CardHeader>
-
-            <CardContent className="relative">
-                <div className="flex items-end gap-2">
-                    <span className={`text-3xl font-bold tabular-nums ${isOn ? "text-green-500" : ""}`}>
-                        {power === null ? "—" : power.toFixed(0)}
-                    </span>
-                    <span className="text-lg text-muted-foreground mb-1">W</span>
-                </div>
-
-                <div className="mt-3 h-2 bg-muted rounded-full overflow-hidden">
-                    <div
-                        className={`h-full rounded-full transition-all duration-500 ${isOn ? "bg-gradient-to-r from-green-400 to-green-600" : "bg-muted-foreground/30"
-                            }`}
-                        style={{ width: `${power === null ? 0 : Math.min((power / maxPower) * 100, 100)}%` }}
-                    />
-                </div>
-
-                <p className="text-xs text-muted-foreground mt-2">
-                    {voltage === null ? "—" : `${voltage.toFixed(1)}V`} • {energy === null ? "—" : `${(energy / 1000).toFixed(1)} kWh total`}
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">{status === "error" ? "Latest telemetry request failed" : readingAge}</p>
+                <p className="text-xs text-muted-foreground mt-2">{status === "error" ? "Latest telemetry request failed" : readingAge}</p>
             </CardContent>
         </Card>
     )
@@ -265,20 +227,22 @@ export function LiveStatus() {
     return (
         <div className="space-y-4">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                <h2 className="text-2xl font-bold tracking-tight">Heater Status (Live)</h2>
+                <h2 className="font-display text-xl font-extrabold text-foreground">Heater Status (Live)</h2>
                 <div className="flex items-center space-x-2 w-full sm:w-auto justify-between sm:justify-end">
                     <Badge
-                        variant={freshChannelCount === 2 ? "default" : "destructive"}
-                        className={freshChannelCount === 2 ? "bg-green-500 hover:bg-green-600" : ""}
+                        className={freshChannelCount === 2 ? "bg-live text-live-foreground hover:bg-live/90" : ""}
+                        variant={freshChannelCount === 2 ? undefined : "destructive"}
                     >
-                        <span className={`w-2 h-2 rounded-full mr-2 ${freshChannelCount === 2 ? "bg-white animate-pulse" : "bg-red-200"}`} />
+                        <span className={`w-2 h-2 rounded-full mr-2 ${freshChannelCount === 2 ? "bg-live-foreground animate-pulse" : "bg-destructive-foreground/60"}`} />
                         {freshChannelCount}/2 channels fresh
                     </Badge>
                 </div>
             </div>
 
             <div className="grid gap-4 md:grid-cols-2">
-                <PeakHeaterCard
+                <HeaterCard
+                    name="Heater 1 (Boost)"
+                    icon={Zap}
                     power={peakIsFresh ? (main?.power_w ?? null) : null}
                     voltage={peakIsFresh ? (main?.voltage ?? null) : null}
                     energy={peakIsFresh ? (main?.energy_total_wh ?? null) : null}
@@ -287,7 +251,9 @@ export function LiveStatus() {
                     status={peakStatus}
                     readingAge={formatReadingAge(main, nowMs)}
                 />
-                <OffPeakHeaterCard
+                <HeaterCard
+                    name="Heater 2 (Storage)"
+                    icon={Activity}
                     power={offPeakIsFresh ? (second?.power_w ?? null) : null}
                     voltage={offPeakIsFresh ? (second?.voltage ?? null) : null}
                     energy={offPeakIsFresh ? (second?.energy_total_wh ?? null) : null}

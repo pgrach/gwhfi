@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Zap, TrendingDown, Clock } from "lucide-react"
+import { Zap, Sparkles, Check, Clock } from "lucide-react"
 import { supabase } from "@/lib/supabase"
 import { getUKDateBoundaries } from "@/lib/date-utils"
 import { OCTOPUS_RATES_URL } from "@/lib/octopus-config"
@@ -95,13 +95,13 @@ export function CurrentRate() {
 
     if (loading) {
         return (
-            <Card className="bg-gradient-to-br from-purple-500/10 to-pink-500/10 border-purple-500/20">
+            <Card>
                 <CardContent className="p-4">
                     <div className="animate-pulse flex items-center gap-4">
-                        <div className="h-12 w-12 rounded-xl bg-purple-500/20"></div>
+                        <div className="h-12 w-12 rounded-xl bg-rust/10"></div>
                         <div className="space-y-2 flex-1">
-                            <div className="h-4 bg-purple-500/20 rounded w-1/3"></div>
-                            <div className="h-6 bg-purple-500/20 rounded w-1/2"></div>
+                            <div className="h-4 bg-muted rounded w-1/3"></div>
+                            <div className="h-6 bg-muted rounded w-1/2"></div>
                         </div>
                     </div>
                 </CardContent>
@@ -111,44 +111,35 @@ export function CurrentRate() {
 
     const isSmart = currentRate && currentRate.value_inc_vat <= avgRate
     const isNegative = currentRate && currentRate.value_inc_vat <= 0
+    const eyebrow = "text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-foreground"
+
+    // Rust is the single signal accent — used here for the rate figure and
+    // its icon, sparingly (icon chip only, never a full-card fill).
     return (
-        <Card className={`transition-all duration-300 ${isNegative
-            ? "bg-gradient-to-br from-green-500/20 to-emerald-500/20 border-green-500/40 shadow-lg shadow-green-500/10"
-            : isSmart
-                ? "bg-gradient-to-br from-emerald-500/10 to-teal-500/10 border-emerald-500/20"
-                : "bg-gradient-to-br from-purple-500/10 to-pink-500/10 border-purple-500/20"
-            }`}>
+        <Card className={isNegative ? "border-live/40 shadow-lg shadow-live/10" : ""}>
             <CardContent className="p-4">
                 <div className="flex flex-col lg:flex-row lg:items-center gap-4">
                     {/* Current Rate */}
                     <div className="flex items-center gap-4 flex-1">
-                        <div className={`flex items-center justify-center w-12 h-12 rounded-xl ${isNegative
-                            ? "bg-green-500 shadow-lg shadow-green-500/30"
-                            : isSmart
-                                ? "bg-emerald-500"
-                                : "bg-purple-500"
-                            }`}>
-                            {isNegative ? (
-                                <TrendingDown className="w-6 h-6 text-white" />
-                            ) : (
-                                <Zap className="w-6 h-6 text-white" />
-                            )}
+                        <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-rust/10">
+                            <Zap className="w-6 h-6 text-rust" />
                         </div>
                         <div>
-                            <p className="text-sm text-muted-foreground font-medium">Live Electricity Rate</p>
-                            <div className="flex items-center gap-2">
-                                <span className={`text-2xl font-bold ${isNegative ? "text-green-500" : isSmart ? "text-emerald-500" : ""
-                                    }`}>
+                            <p className={eyebrow}>Live Electricity Rate</p>
+                            <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-2xl font-bold font-mono tabular-nums text-rust">
                                     {currentRate ? currentRate.value_inc_vat.toFixed(2) : "—"}p/kWh
                                 </span>
                                 {isNegative && (
-                                    <Badge className="bg-green-500 hover:bg-green-600 animate-pulse">
-                                        💰 NEGATIVE
+                                    <Badge className="bg-live text-live-foreground hover:bg-live/90 animate-pulse">
+                                        <Sparkles className="w-3 h-3" />
+                                        You&apos;re earning
                                     </Badge>
                                 )}
                                 {isSmart && !isNegative && (
-                                    <Badge className="bg-emerald-500 hover:bg-emerald-600">
-                                        ✓ Below Avg
+                                    <Badge variant="outline" className="border-rust/30 bg-rust/10 text-rust">
+                                        <Check className="w-3 h-3" />
+                                        Below Avg
                                     </Badge>
                                 )}
                             </div>
@@ -161,8 +152,8 @@ export function CurrentRate() {
                     {/* Daily Average */}
                     <div className="flex items-center gap-4">
                         <div className="text-left">
-                            <p className="text-sm text-muted-foreground font-medium">Agile Daily Average</p>
-                            <span className="text-lg font-semibold">{avgRate.toFixed(2)}p/kWh</span>
+                            <p className={eyebrow}>Agile Daily Average</p>
+                            <span className="text-lg font-semibold font-mono tabular-nums">{avgRate.toFixed(2)}p/kWh</span>
                         </div>
                     </div>
 
@@ -173,7 +164,7 @@ export function CurrentRate() {
                     <div className="flex items-center gap-3">
                         <Clock className="w-5 h-5 text-muted-foreground" />
                         <div>
-                            <p className="text-sm text-muted-foreground font-medium">Next Scheduled Heating</p>
+                            <p className={eyebrow}>Next Scheduled Heating</p>
                             <span className="text-lg font-semibold whitespace-nowrap">
                                 {nextSmartSlot || "—"}
                             </span>

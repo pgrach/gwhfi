@@ -6,8 +6,9 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-plex-sans);
+  --font-mono: var(--font-plex-mono);
+  --font-display: var(--font-archivo);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -37,6 +38,17 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+  /* Heat21 signal accents. Rust is the single signal colour (key figures,
+     links, CTAs, the rate line) — used sparingly, never as a fill. Live
+     Signal is reserved for pulsing/active states. Teal family carries data
+     (the two heater traces); Cold Loop is the neutral "cool" marker. */
+  --color-rust: var(--rust);
+  --color-rust-foreground: var(--rust-foreground);
+  --color-live: var(--live);
+  --color-live-foreground: var(--live-foreground);
+  --color-teal: var(--teal);
+  --color-teal-glow: var(--teal-glow);
+  --color-cold: var(--cold);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -46,73 +58,94 @@
   --radius-4xl: calc(var(--radius) + 16px);
 }
 
+/* Heat21 app palette (light). Exact values from Heat21 Brand Guidelines
+   v1.1: warm paper and charcoal carry the brand, rust is the single signal
+   accent, teal supports data. Small radii for an instrument-panel feel. */
 :root {
-  --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --radius: 0.375rem;
+  --background: #F6F5F2; /* Paper */
+  --foreground: #1B1B1D; /* Charcoal */
+  --card: #FFFFFF;
+  --card-foreground: #1B1B1D;
+  --popover: #FFFFFF;
+  --popover-foreground: #1B1B1D;
+  --primary: #1B1B1D; /* Charcoal — primary buttons */
+  --primary-foreground: #F6F5F2;
+  --secondary: #EBE9E4;
+  --secondary-foreground: #1B1B1D;
+  --muted: #EBE9E4;
+  --muted-foreground: #6B675C;
+  --accent: #EBE9E4;
+  --accent-foreground: #1B1B1D;
+  --destructive: #B3261E;
+  --destructive-foreground: #FFFFFF;
+  --border: #D9D6CF;
+  --input: #D9D6CF;
+  --ring: #C94A2C;
+  --rust: #C94A2C; /* Rust Accent — signal, links, key figures, CTAs */
+  --rust-foreground: #F6F5F2;
+  --live: #FF4D00; /* Live Signal — pulsing/active states only */
+  --live-foreground: #F6F5F2;
+  --teal: #007799;
+  --teal-glow: #11AACC;
+  --cold: #0284C7; /* Cold Loop */
+  --chart-1: #C94A2C;
+  --chart-2: #007799;
+  --chart-3: #11AACC;
+  --chart-4: #0284C7;
+  --chart-5: #6B675C;
+  --sidebar: #FFFFFF;
+  --sidebar-foreground: #1B1B1D;
+  --sidebar-primary: #1B1B1D;
+  --sidebar-primary-foreground: #F6F5F2;
+  --sidebar-accent: #EBE9E4;
+  --sidebar-accent-foreground: #1B1B1D;
+  --sidebar-border: #D9D6CF;
+  --sidebar-ring: #C94A2C;
 }
 
+/* Heat21 app palette (dark). "Paper text on near-black, with rust kept for
+   accents only" — the brand doc's own dark-surface spec. */
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --background: #0E0E10; /* Near Black — dark-mode canvas */
+  --foreground: #F6F5F2; /* Paper text */
+  --card: #1B1B1D; /* Charcoal */
+  --card-foreground: #F6F5F2;
+  --popover: #1B1B1D;
+  --popover-foreground: #F6F5F2;
+  --primary: #F6F5F2;
+  --primary-foreground: #1B1B1D;
+  --secondary: #2A2A2D;
+  --secondary-foreground: #F6F5F2;
+  --muted: #2A2A2D;
+  --muted-foreground: #A39D8F;
+  --accent: #2A2A2D;
+  --accent-foreground: #F6F5F2;
+  --destructive: #E5484D;
+  --destructive-foreground: #FFFFFF;
+  --border: #303033;
+  --input: #303033;
+  --ring: #C94A2C;
+  --rust: #C94A2C;
+  --rust-foreground: #F6F5F2;
+  --live: #FF4D00;
+  --live-foreground: #F6F5F2;
+  --teal: #007799;
+  --teal-glow: #11AACC;
+  --cold: #0284C7;
+  --chart-1: #C94A2C;
+  --chart-2: #007799;
+  --chart-3: #11AACC;
+  --chart-4: #0284C7;
+  --chart-5: #A39D8F;
+  --sidebar: #1B1B1D;
+  --sidebar-foreground: #F6F5F2;
+  --sidebar-primary: #F6F5F2;
+  --sidebar-primary-foreground: #1B1B1D;
+  --sidebar-accent: #2A2A2D;
+  --sidebar-accent-foreground: #F6F5F2;
+  --sidebar-border: #303033;
+  --sidebar-ring: #C94A2C;
 }
 
 @layer base {
