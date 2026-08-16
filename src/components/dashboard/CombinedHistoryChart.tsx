@@ -511,6 +511,9 @@ export function CombinedHistoryChart() {
     }, [viewMode, customDate, refreshKey, ukToday, ukYesterday])
 
     const isDayView = viewMode === "today" || viewMode === "tomorrow" || viewMode === "custom"
+    // Boost runs rarely enough that a permanent flat-zero trace is just
+    // noise — only surface it when the selected range actually used it.
+    const hasBoostUsage = totals.peak !== null && totals.peak > 0
     const chartBucketMinutes = isDayView ? 1 : 60
     const chartBucketMs = chartBucketMinutes * 60_000
     const scheduledPeriods = chartBucketMinutes === 1
@@ -614,10 +617,14 @@ export function CombinedHistoryChart() {
                         <span>Total heater usage in selected range:</span>
                         <span className="hidden sm:inline text-muted-foreground mx-2">|</span>
                         <div className="flex gap-4 sm:gap-0">
-                            <span className="text-teal font-bold whitespace-nowrap">
-                                Boost: {totals.peak === null ? "—" : `${totals.peak.toFixed(2)} kWh`}
-                            </span>
-                            <span className="hidden sm:inline text-muted-foreground mx-2">|</span>
+                            {hasBoostUsage && (
+                                <>
+                                    <span className="text-teal font-bold whitespace-nowrap">
+                                        Boost: {totals.peak?.toFixed(2)} kWh
+                                    </span>
+                                    <span className="hidden sm:inline text-muted-foreground mx-2">|</span>
+                                </>
+                            )}
                             <span className="text-teal-glow font-bold whitespace-nowrap">
                                 Storage: {totals.offPeak === null ? "—" : `${totals.offPeak.toFixed(2)} kWh`}
                             </span>
@@ -792,19 +799,22 @@ export function CombinedHistoryChart() {
 
                             {/* Filled step traces make real heater cycling readable. Both heaters
                                 are the same telemetry "data" stream per brand spec, so they share
-                                the teal family and differ only by shade. */}
-                            <Area
-                                yAxisId="right"
-                                type="stepAfter"
-                                dataKey="power_0"
-                                name="Boost Heater (W)"
-                                stroke="var(--teal)"
-                                strokeWidth={2}
-                                fill="var(--teal)"
-                                fillOpacity={0.14}
-                                baseValue={0}
-                                dot={false}
-                            />
+                                the teal family and differ only by shade. Boost is rarely used, so
+                                its trace/legend only appear when the range actually shows usage. */}
+                            {hasBoostUsage && (
+                                <Area
+                                    yAxisId="right"
+                                    type="stepAfter"
+                                    dataKey="power_0"
+                                    name="Boost Heater (W)"
+                                    stroke="var(--teal)"
+                                    strokeWidth={2}
+                                    fill="var(--teal)"
+                                    fillOpacity={0.14}
+                                    baseValue={0}
+                                    dot={false}
+                                />
+                            )}
                             <Area
                                 yAxisId="right"
                                 type="stepAfter"

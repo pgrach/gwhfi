@@ -239,18 +239,22 @@ export function LiveStatus() {
                 </div>
             </div>
 
-            <div className="grid gap-4 md:grid-cols-2">
-                <HeaterCard
-                    name="Heater 1 (Boost)"
-                    icon={Zap}
-                    power={peakIsFresh ? (main?.power_w ?? null) : null}
-                    voltage={peakIsFresh ? (main?.voltage ?? null) : null}
-                    energy={peakIsFresh ? (main?.energy_total_wh ?? null) : null}
-                    isOn={isPeakOn}
-                    maxPower={MAX_POWER}
-                    status={peakStatus}
-                    readingAge={formatReadingAge(main, nowMs)}
-                />
+            {/* Boost runs rarely enough that a permanent OFF card is just noise —
+                only surface it while it's actually drawing power. */}
+            <div className={`grid gap-4 ${isPeakOn ? "md:grid-cols-2" : "md:grid-cols-1"}`}>
+                {isPeakOn && (
+                    <HeaterCard
+                        name="Heater 1 (Boost)"
+                        icon={Zap}
+                        power={peakIsFresh ? (main?.power_w ?? null) : null}
+                        voltage={peakIsFresh ? (main?.voltage ?? null) : null}
+                        energy={peakIsFresh ? (main?.energy_total_wh ?? null) : null}
+                        isOn={isPeakOn}
+                        maxPower={MAX_POWER}
+                        status={peakStatus}
+                        readingAge={formatReadingAge(main, nowMs)}
+                    />
+                )}
                 <HeaterCard
                     name="Heater 2 (Storage)"
                     icon={Activity}
