@@ -677,7 +677,6 @@ export function CombinedHistoryChart() {
                         <span className="h-3 w-5 rounded-sm border border-teal/30 bg-teal/10" />
                         Scheduled storage-heater ON window
                     </span>
-                    <span>Filled traces show measured power draw; the rate line is the live Octopus Agile price</span>
                 </div>
                 <div className="h-[400px] w-full">
                     <ResponsiveContainer width="100%" height="100%">
