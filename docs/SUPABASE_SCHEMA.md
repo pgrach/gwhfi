@@ -91,3 +91,26 @@ There is deliberately no destructive retention job in Phase 1. Raw observations
 are the evidence needed to reconstruct heater episodes and train or audit later
 models. Define an archive format, restore test, and accepted training horizon
 before introducing partition expiry or deletion.
+
+## Thermostat-cycle control state
+
+The thermostat-cycle controller persists its latest restart state in
+`heater_control_state` and writes append-only decision evidence to
+`heater_control_events`. Critical state such as the hold deadline, most recent
+confirmed tank-satisfied time, delivered session energy at the last transition,
+detector version, and shadow/live mode therefore survive Railway restarts. A
+versioned `state_payload` preserves the rolling window and counters captured at
+each transition. Evidence accumulated after that transition may be lost on a
+restart, which is deliberately conservative: the detector must observe enough
+real heat again before it may suppress a scheduled request.
+
+Both tables are service-only: `anon` and `authenticated` have no privileges or
+RLS policy. The Railway controller writes them with the same server-side
+`service_role` key used for telemetry ingestion. Browser-facing summaries must
+be introduced through a separately reviewed read-only view or RPC rather than
+granting direct access to raw control evidence.
+
+Each event carries a controller-generated `event_id` idempotency key. A retried
+write can safely use an upsert without duplicating training or audit evidence.
+There is no automatic retention policy; control events are part of the durable
+history needed to tune and validate future demand models.

@@ -69,6 +69,31 @@ class ShellyManagerTests(unittest.TestCase):
             },
         )
 
+    def test_reads_power_and_counter_from_one_gen1_status_request(self):
+        manager, session = self.make_manager(FakeResponse([{
+            "id": "meter-id",
+            "online": 1,
+            "status": {"emeters": [
+                {"power": 0, "total": 100},
+                {"power": 3012.5, "total": 123456.75},
+            ]},
+        }]))
+
+        self.assertEqual(
+            manager.get_meter_reading(1),
+            {"power_w": 3012.5, "energy_total_wh": 123456.75},
+        )
+        self.assertEqual(session.post.call_count, 1)
+
+    def test_invalid_meter_power_is_unknown_not_zero(self):
+        manager, _ = self.make_manager(FakeResponse([{
+            "id": "meter-id",
+            "online": 1,
+            "status": {"emeters": [{"power": "bad", "total": 100}]},
+        }]))
+
+        self.assertIsNone(manager.get_meter_reading(0))
+
     def test_on_command_uses_v2_api_and_fail_safe_lease(self):
         manager, session = self.make_manager(FakeResponse())
 

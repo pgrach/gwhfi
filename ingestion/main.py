@@ -7,6 +7,8 @@ from services.time_service import TimeService
 from services.shelly_manager import ShellyManager
 from services.smart_scheduler import SmartScheduler
 from services.schedule_storage import ScheduleStorage
+from services.thermostat_cycle_detector import DetectorConfig, ThermostatCycleDetector
+from services.thermostat_state_storage import ThermostatStateStorage
 from tuya_manager import TuyaManager
 from octopus_client import OctopusClient
 
@@ -39,7 +41,7 @@ class SmartWaterController:
             
         self.shelly = ShellyManager()
         if not self.shelly.enabled:
-            logger.warning("Shelly Manager disabled. Smart Cooldown will NOT function.")
+            logger.warning("Shelly Manager disabled. Thermostat inference will NOT function.")
         
         self.octopus = OctopusClient(Config.OCTOPUS_PRODUCT_CODE, Config.OCTOPUS_REGION_CODE)
         self.scheduler = SmartScheduler(Config)
@@ -48,12 +50,49 @@ class SmartWaterController:
         self.main_heater_slots = []
         self.second_heater_slots = []
         
-        self.cooldown_until = None
-
-        # Tank Full detection - require consecutive low readings to prevent false triggers
-        self.low_power_count = 0
-        self.LOW_POWER_THRESHOLD = 10  # Watts
-        self.LOW_POWER_READINGS_REQUIRED = 3  # Need 3 consecutive readings (~3 mins)
+        self.cooldown_until = None  # live-mode compatibility for command logging
+        self.thermostat_detector = None
+        self.thermostat_state_storage = None
+        self.thermostat_mode = Config.THERMOSTAT_CONTROL_MODE
+        thermostat_route_valid = (
+            Config.OFF_PEAK_HEATER_TARGET == 'second'
+            and Config.SECOND_HEATER_CONTROL == 'shelly'
+            and self.shelly.monitoring_enabled
+        )
+        if self.thermostat_mode != 'off' and not thermostat_route_valid:
+            logger.warning(
+                "Thermostat inference requested but disabled: it requires the "
+                "off-peak second heater on Shelly control plus Shelly meter telemetry."
+            )
+            self.thermostat_mode = 'off'
+        elif self.thermostat_mode != 'off':
+            self.thermostat_state_storage = ThermostatStateStorage(
+                site_id=Config.TELEMETRY_SITE_ID,
+                heater_key="off_peak",
+            )
+            restored_state = None
+            # Shadow state must never survive a deployment and accidentally
+            # become a live suppression decision later.
+            if self.thermostat_mode == 'live':
+                restored_state = self.thermostat_state_storage.load_state(live_only=True)
+            self.thermostat_detector = ThermostatCycleDetector(
+                DetectorConfig(
+                    on_threshold_w=Config.THERMOSTAT_POWER_ON_THRESHOLD_W,
+                    off_threshold_w=Config.THERMOSTAT_POWER_OFF_THRESHOLD_W,
+                    min_real_heat_minutes=Config.THERMOSTAT_MIN_REAL_HEAT_MINUTES,
+                    min_real_heat_wh=Config.THERMOSTAT_MIN_REAL_HEAT_WH,
+                    low_samples_required=Config.THERMOSTAT_LOW_SAMPLES_REQUIRED,
+                    chatter_window_minutes=Config.THERMOSTAT_CHATTER_WINDOW_MINUTES,
+                    min_chatter_transitions=Config.THERMOSTAT_MIN_CHATTER_TRANSITIONS,
+                    max_topup_burst_minutes=Config.THERMOSTAT_MAX_TOPUP_BURST_MINUTES,
+                    min_cooldown_minutes=Config.THERMOSTAT_MIN_COOLDOWN_MINUTES,
+                    max_deferral_minutes=Config.THERMOSTAT_MAX_DEFERRAL_MINUTES,
+                    probe_success_minutes=Config.THERMOSTAT_PROBE_SUCCESS_MINUTES,
+                    probe_short_minutes=Config.THERMOSTAT_PROBE_SHORT_MINUTES,
+                    max_sample_gap_minutes=Config.THERMOSTAT_MAX_SAMPLE_GAP_MINUTES,
+                ),
+                initial_state=restored_state,
+            )
 
         # State storage for UI
         self.system_state = {
@@ -61,6 +100,14 @@ class SmartWaterController:
             "off_peak_heater": {"online": False, "state": "UNKNOWN", "last_error": None},
             "cooldown_mode": False,
             "cooldown_until": None,
+            "thermostat_control": {
+                "mode": self.thermostat_mode,
+                "state": self.thermostat_detector.state if self.thermostat_detector else "OFF",
+                "suppressed": False,
+                "reason": None,
+                "hold_until": None,
+                "evidence": {},
+            },
             "last_updated": None,
             "next_schedule_update": None,
             "rates": []
@@ -203,69 +250,19 @@ class SmartWaterController:
         """Main check logic."""
         now_utc = self.time_service.now()
         self.system_state["last_updated"] = now_utc.strftime("%Y-%m-%d %H:%M:%S")
-        
-        # Updates for UI
-        self.system_state["cooldown_mode"] = False
-        if self.cooldown_until:
-            if now_utc < self.cooldown_until:
-                self.system_state["cooldown_mode"] = True
-                self.system_state["cooldown_until"] = self.cooldown_until.isoformat()
-            else:
-                # Cooldown expired
-                logger.info("ℹ️ Smart Cooldown Expired. Resuming normal operation.")
-                self.cooldown_until = None
-                self.system_state["cooldown_until"] = None
 
         # 1. Work out which schedule windows are active.
         active_peak, slot_peak = self.is_in_slot(self.second_heater_slots, now_utc)
         active_offpeak, slot_offpeak = self.is_in_slot(self.main_heater_slots, now_utc)
 
-        # 2. Smart Cooldown Logic for off-peak/storage schedule.
-        if (
-            active_offpeak
-            and self.cooldown_until
-            and Config.SMART_COOLDOWN_ENABLED
-        ):
-            # We should be ON, but Cooldown is active -> FORCE OFF
-            active_offpeak = False
-            slot_offpeak = None # Clear slot info to avoid confusing logs
-            # logger.debug("Skipping heating slot due to Cooldown.")
-
-        elif active_offpeak and not self.cooldown_until:
-            # We are ON. Check Power Consumption.
-            # Using Channel 1 for Off-Peak Heater
-            if not Config.SMART_COOLDOWN_ENABLED:
-                self.low_power_count = 0
-            else:
-                power = self.shelly.get_power(channel=Config.SHELLY_CHANNEL_SECOND)
-
-                if power is not None:
-                    # Check for Mechanical Timer Grace Period
-                    # If the previous hour was blocked, the mechanical timer might be slow to close.
-                    # Allow a 30-minute buffer where we ignore 0W readings.
-                    prev_hour = (now_utc.hour - 1) % 24
-                    is_grace_period = (prev_hour in Config.BLOCKED_HOURS) and (now_utc.minute < 30)
-
-                    if is_grace_period and power < self.LOW_POWER_THRESHOLD:
-                        logger.info(f"⏳ Grace Period (Mechanical Switch Lag): Ignoring low power ({power}W).")
-                        self.low_power_count = 0
-                    elif power < self.LOW_POWER_THRESHOLD:
-                        self.low_power_count += 1
-                        logger.debug(f"Low power reading {self.low_power_count}/{self.LOW_POWER_READINGS_REQUIRED} ({power}W)")
-
-                        if self.low_power_count >= self.LOW_POWER_READINGS_REQUIRED:
-                            # Confirmed tank is full after multiple consecutive low readings
-                            logger.info(f"📉 Tank Full Confirmed ({self.low_power_count} consecutive readings < {self.LOW_POWER_THRESHOLD}W). Triggering Smart Cooldown.")
-                            self.cooldown_until = now_utc + timedelta(minutes=90)
-                            active_offpeak = False
-                            self.low_power_count = 0  # Reset counter
-                    else:
-                        # Power is normal (heater actively drawing), reset counter
-                        if self.low_power_count > 0:
-                            logger.debug(f"Power restored ({power}W). Resetting low power counter.")
-                        self.low_power_count = 0
-                else:
-                    logger.warning("Failed to read power. Cannot verify Tank Full status.")
+        # 2. Infer mechanical-thermostat saturation.  All errors fail open so
+        # detector or persistence faults can never prevent the Shelly lease
+        # from being renewed during a valid heating slot.
+        active_offpeak, slot_offpeak = self.apply_thermostat_policy(
+            active_offpeak,
+            slot_offpeak,
+            now_utc,
+        )
 
         # 3. Apply controls. Normal setup routes off-peak scheduled slots to the lower/storage heater.
         # The main-heater route is available as an explicit fallback when configured.
@@ -285,6 +282,130 @@ class SmartWaterController:
             # Peak heater ignores cooldown logic because it is the free/negative-price strategy.
             self.apply_heater_state("peak_heater", Config.TUYA_DEVICE_ID_MAIN, active_peak, "Peak Heater", slot_peak)
             self.apply_heater_state("off_peak_heater", Config.TUYA_DEVICE_ID_SECOND, active_offpeak, "Off-Peak Heater", slot_offpeak)
+
+    def apply_thermostat_policy(self, active_offpeak, slot_offpeak, now_utc):
+        """Run thermostat inference and optionally suppress the storage relay."""
+        self.system_state["cooldown_mode"] = False
+        self.system_state["cooldown_until"] = None
+        self.cooldown_until = None
+
+        detector = self.thermostat_detector
+        if detector is None:
+            return active_offpeak, slot_offpeak
+
+        state_before = detector.state
+        detector_state_before = detector.export_state()
+        reading = None
+        relay_state = self.system_state["off_peak_heater"]
+        relay_confirmed_on = bool(
+            relay_state.get("online") and relay_state.get("state") == "ON"
+        )
+        # While virtually holding, do not interpret the real shadow-mode load;
+        # this mirrors the samples that live mode would see with its relay OFF.
+        should_sample = active_offpeak and state_before != "HOLD" and relay_confirmed_on
+        try:
+            if should_sample:
+                reading = self.shelly.get_meter_reading(channel=Config.SHELLY_CHANNEL_SECOND)
+            power_w = reading.get("power_w") if reading else None
+            energy_total_wh = reading.get("energy_total_wh") if reading else None
+            decision = detector.observe(
+                now=now_utc,
+                scheduled_on=active_offpeak,
+                relay_commanded_on=(
+                    active_offpeak and state_before != "HOLD" and relay_confirmed_on
+                ),
+                power_w=power_w,
+                energy_total_wh=energy_total_wh,
+                sample_valid=reading is not None,
+            )
+        except Exception:
+            logger.exception("Thermostat detector failed; continuing scheduled heating (fail open).")
+            return active_offpeak, slot_offpeak
+
+        shadow_mode = self.thermostat_mode == "shadow"
+        live_mode = self.thermostat_mode == "live"
+        state_after = decision.state
+        event_type = decision.event
+        if event_type is None and state_before != state_after:
+            event_type = "state_transition"
+
+        control_state = self.system_state["thermostat_control"]
+        control_state.update({
+            "mode": self.thermostat_mode,
+            "state": state_after,
+            "suppressed": bool(live_mode and decision.suppress and active_offpeak),
+            "reason": decision.reason,
+            "hold_until": decision.hold_until.isoformat() if decision.hold_until else None,
+            "evidence": decision.evidence,
+        })
+
+        if event_type:
+            prefix = "SHADOW" if shadow_mode else "LIVE"
+            logger.info(
+                "THERMOSTAT %s event=%s state=%s->%s reason=%s evidence=%s",
+                prefix,
+                event_type,
+                state_before,
+                state_after,
+                decision.reason,
+                decision.evidence,
+            )
+            transition_persisted = False
+            try:
+                if self.thermostat_state_storage:
+                    transition_persisted = self.thermostat_state_storage.save_transition(
+                        occurred_at=now_utc,
+                        state_payload=detector.export_state(),
+                        mode_before=state_before,
+                        mode_after=state_after,
+                        event_type=event_type,
+                        shadow_mode=shadow_mode,
+                        relay_commanded_on=active_offpeak,
+                        power_w=power_w,
+                        energy_total_wh=energy_total_wh,
+                        evidence={**decision.evidence, "reason": decision.reason},
+                        policy_version=Config.THERMOSTAT_POLICY_VERSION,
+                        slot=slot_offpeak,
+                    )
+            except Exception:
+                logger.exception("Thermostat transition persistence failed.")
+
+            if live_mode and decision.suppress and not transition_persisted:
+                # Never turn a scheduled heater off for a state transition we
+                # could not durably record. Restore the pre-observation state
+                # so the next loop retries the evidence and keeps renewing the
+                # bounded Shelly ON lease in the meantime.
+                detector.restore_state(detector_state_before)
+                control_state.update({
+                    "state": detector.state,
+                    "suppressed": False,
+                    "reason": "transition_persistence_failed",
+                    "hold_until": (
+                        detector.hold_until.isoformat() if detector.hold_until else None
+                    ),
+                    "evidence": {},
+                })
+                logger.error(
+                    "Thermostat suppression skipped because its transition was not persisted."
+                )
+                return active_offpeak, slot_offpeak
+
+        if decision.suppress and active_offpeak:
+            if shadow_mode:
+                logger.info(
+                    "THERMOSTAT SHADOW would suppress off-peak heating until %s (%s).",
+                    decision.hold_until,
+                    decision.reason,
+                )
+            elif live_mode:
+                self.cooldown_until = decision.hold_until
+                self.system_state["cooldown_mode"] = True
+                self.system_state["cooldown_until"] = (
+                    decision.hold_until.isoformat() if decision.hold_until else None
+                )
+                return False, None
+
+        return active_offpeak, slot_offpeak
 
     def _heater_backend(self, key):
         return Config.MAIN_HEATER_CONTROL if key == "peak_heater" else Config.SECOND_HEATER_CONTROL
@@ -320,7 +441,7 @@ class SmartWaterController:
             action = "Turning ON" if target_state else "Turning OFF"
             reason = f"Slot: {slot_info['value_inc_vat']}p until {slot_info['valid_to']}" if slot_info else "No active slot"
             if not target_state and self.cooldown_until:
-                reason = "Smart Cooldown Active"
+                reason = "Thermostat hold active"
 
             logger.info(f"{action} {device_name} via Shelly relay channel {channel} ({reason})")
 
@@ -336,6 +457,12 @@ class SmartWaterController:
                     self.system_state[key]["last_error"] = None
                 else:
                     error_msg = result.get("error") if isinstance(result, dict) else result
+                    # The cached ON value represents only the previous accepted
+                    # command. Once a lease renewal fails it must not be used as
+                    # proof that the relay is still energised; the bounded
+                    # auto-OFF lease may already have expired.
+                    self.system_state[key]["online"] = False
+                    self.system_state[key]["state"] = "UNKNOWN"
                     self.system_state[key]["last_error"] = error_msg
                     logger.error(f"Shelly relay command for {device_name} did not succeed. Response: {result}")
                 return
@@ -367,7 +494,7 @@ class SmartWaterController:
             reason = f"Slot: {slot_info['value_inc_vat']}p until {slot_info['valid_to']}" if slot_info else "No active slot"
             
             if not target_state and self.cooldown_until:
-                reason = "Smart Cooldown Active"
+                reason = "Thermostat hold active"
                 
             logger.info(f"{action} {device_name} ({reason})")
             
@@ -491,7 +618,18 @@ class SmartWaterController:
 
         logger.info("Starting Control Loop (Press Ctrl+C to stop)")
         logger.info(f"Smart Scheduler Config: Budget={Config.DAILY_HEATING_BUDGET_HOURS}h, MaxPrice={Config.ABSOLUTE_MAX_PRICE}p, BelowAvg={Config.USE_BELOW_AVERAGE}")
-        logger.info(f"Smart Cooldown Enabled: {Config.SMART_COOLDOWN_ENABLED}")
+        logger.info(f"Thermostat Control Mode: {self.thermostat_mode}")
+        if self.thermostat_detector:
+            logger.info(
+                "Thermostat policy: on>=%sW off<=%sW arm=%sm/%.0fWh "
+                "cooldown=%sm max_deferral=%sm",
+                Config.THERMOSTAT_POWER_ON_THRESHOLD_W,
+                Config.THERMOSTAT_POWER_OFF_THRESHOLD_W,
+                Config.THERMOSTAT_MIN_REAL_HEAT_MINUTES,
+                Config.THERMOSTAT_MIN_REAL_HEAT_WH,
+                Config.THERMOSTAT_MIN_COOLDOWN_MINUTES,
+                Config.THERMOSTAT_MAX_DEFERRAL_MINUTES,
+            )
         logger.info(f"Storage Heater Enabled: {Config.STORAGE_HEATER_ENABLED}")
         logger.info(f"Off-Peak Heater Target: {Config.OFF_PEAK_HEATER_TARGET}")
         logger.info(f"Main Heater Control: {Config.MAIN_HEATER_CONTROL}")
@@ -532,4 +670,3 @@ if __name__ == "__main__":
         logger.warning("Starting Service in LIVE mode. Heater commands are enabled.")
     controller = SmartWaterController(dry_run=Config.DRY_RUN)
     controller.run()
-
