@@ -4,13 +4,15 @@ Smart Scheduler for Water Heater Control
 Computes optimal heating slots based on Octopus Agile rates rather than
 time windows. The algorithm:
 1. Fetches rates for the next 24-48 hours
-2. Applies price threshold (below average AND/OR absolute cap)
-3. Excludes blocked hours (e.g., morning peak)
-4. Selects the cheapest N slots to meet the daily heating budget
+2. Prefers rates below the configured price ceiling
+3. Excludes blocked hours (e.g., evening peak)
+4. Preserves the morning/afternoon/evening hot-water windows
+5. If prices are high overall, fills the configured daily allowance with
+   the cheapest unblocked slots rather than leaving the tank unheated
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import pytz
 
 logger = logging.getLogger(__name__)
@@ -36,165 +38,198 @@ class SmartScheduler:
         """Return a rate slot's start in the configured household timezone."""
         return slot['valid_from'].astimezone(self.timezone)
 
-    def compute_schedule_for_date(self, target_date, rates, budget_hours, max_price, use_below_average, blocked_hours):
-        """
-        Main algorithm to select optimal heating slots for a specific calendar date.
+    def compute_schedule_for_date(
+        self,
+        target_date,
+        rates,
+        budget_hours,
+        max_price,
+        use_below_average,
+        blocked_hours,
+        not_before=None,
+    ):
+        """Select the best tariff slots for one local calendar date.
 
-        Args:
-            target_date: datetime.date object representing the day to schedule
-            rates: List of rate dicts with 'valid_from', 'valid_to', 'value_inc_vat'
-            budget_hours: Total hours of heating needed (e.g., 4.0)
-            max_price: Absolute maximum price in pence (e.g., 30.0)
-            use_below_average: If True, also requires price to be below daily average
-            blocked_hours: List of hours to never heat during (e.g., [7, 8] for 07:00-09:00)
-
-        Returns:
-            List of selected rate slots for the target_date, sorted chronologically
+        ``max_price`` is a preferred ceiling, not a reason to leave the tank
+        cold. Readiness windows and the remaining daily allowance first use
+        preferred-price slots, then the cheapest unblocked rates available.
+        Blocked hours remain an absolute exclusion.
         """
         if not rates:
             logger.warning("No rates provided to scheduler.")
             return []
 
-        # Filter rates to only match the target_date
         daily_rates = [r for r in rates if self._local_start(r).date() == target_date]
-
+        if not_before is not None:
+            # A same-day recomputation must not spend the daily allowance on
+            # morning/afternoon slots that have already elapsed.
+            daily_rates = [r for r in daily_rates if r['valid_to'] > not_before]
         if not daily_rates:
             logger.warning(f"No rates found for target date: {target_date}")
             return []
 
-        # Calculate daily average
         daily_avg = sum(r['value_inc_vat'] for r in daily_rates) / len(daily_rates)
-
-        # Determine price thresholds
         strict_threshold = min(daily_avg, max_price) if use_below_average else max_price
-        hard_limit = max_price
+        preferred_cap = max_price
+        target_slots = max(0, int(budget_hours * 2))
 
-        logger.info(f"Smart Scheduler [{target_date}]: Daily avg={daily_avg:.2f}p, Strict Threshold={strict_threshold:.2f}p, Hard Limit={hard_limit:.2f}p")
+        logger.info(
+            "Smart Scheduler [%s]: Daily avg=%.2fp, Strict Threshold=%.2fp, "
+            "Preferred Cap=%.2fp, Target=%s slots",
+            target_date,
+            daily_avg,
+            strict_threshold,
+            preferred_cap,
+            target_slots,
+        )
 
-        # Filter eligible slots (HARD LIMIT ONLY)
-        eligible = []
-        rejected_expensive = []
+        unblocked_rates = []
+        above_cap = []
         rejected_blocked = []
-
         for slot in daily_rates:
-            hour = self._local_start(slot).hour
-
-            # Check if hour is blocked
-            if hour in blocked_hours:
+            if self._local_start(slot).hour in blocked_hours:
                 rejected_blocked.append(slot)
                 continue
+            unblocked_rates.append(slot)
+            if slot['value_inc_vat'] > preferred_cap:
+                above_cap.append(slot)
 
-            # Check price threshold (Hard Limit)
-            if slot['value_inc_vat'] > hard_limit:
-                rejected_expensive.append(slot)
-                continue
+        preferred_rates = [s for s in unblocked_rates if s['value_inc_vat'] <= preferred_cap]
+        selected = []
+        selected_ids = set()
+        fallback_selected = []
 
-            eligible.append(slot)
+        def slot_id(slot):
+            return slot['valid_from']
 
-        # Calculate how many slots we need
-        total_slots_needed = int(budget_hours * 2)
-        morning_slots_needed = 4  # 2 Hours for Morning Ready
-        afternoon_slots_needed = 2  # 1 Hour
-        evening_slots_needed = 2  # 1 Hour for Evening Boost
+        def price_then_time(slot):
+            return (slot['value_inc_vat'], self._local_start(slot))
 
-        # --- STEP 1: Morning Ready (00:00 - 06:00) ---
-        # Select cheapest overnight slots, with tiebreaker preferring
-        # slots CLOSER to morning (later hour wins) so the tank stays
-        # hot until wake-up.
-        morning_candidates = []
-        for slot in eligible:
-            h = self._local_start(slot).hour
-            if 0 <= h < 6:
-                morning_candidates.append(slot)
+        def price_then_later(slot):
+            return (slot['value_inc_vat'], -self._local_start(slot).timestamp())
 
-        # Sort by price first, then by hour DESCENDING (later = closer to morning)
-        # so that among equally-priced slots, later ones are preferred.
-        morning_candidates.sort(key=lambda s: (s['value_inc_vat'], -self._local_start(s).hour))
-        selected_morning = morning_candidates[:morning_slots_needed]
+        def take(candidates, count, sort_key):
+            capacity = min(max(0, count), max(0, target_slots - len(selected)))
+            if capacity == 0:
+                return []
+            available = [s for s in candidates if slot_id(s) not in selected_ids]
+            available.sort(key=sort_key)
+            chosen = available[:capacity]
+            for slot in chosen:
+                selected.append(slot)
+                selected_ids.add(slot_id(slot))
+            return chosen
 
-        if not selected_morning and morning_candidates:
-            logger.warning("No eligible morning slots found within price limits.")
-        elif not morning_candidates:
-            logger.info("No morning rate data available (00:00-06:00).")
+        def fill_readiness_window(predicate, quota, sort_key, label):
+            needed = min(quota, max(0, target_slots - len(selected)))
+            if needed == 0:
+                return
 
-        # If not enough cheap morning slots were found, fill with the
-        # LATEST available morning slots regardless of strict threshold
-        # (still respecting hard limit) so the tank is heated before wake-up.
-        if len(selected_morning) < morning_slots_needed:
-            shortfall = morning_slots_needed - len(selected_morning)
-            selected_morning_ids = {f"{s['valid_from']}" for s in selected_morning}
-            # Fallback: pick latest available morning slots under hard limit
-            fallback_morning = [
-                s for s in eligible
-                if 0 <= self._local_start(s).hour < 6
-                and f"{s['valid_from']}" not in selected_morning_ids
-            ]
-            # Prefer latest slots (closest to wakeup)
-            fallback_morning.sort(key=lambda s: -self._local_start(s).hour)
-            selected_morning.extend(fallback_morning[:shortfall])
-            if fallback_morning[:shortfall]:
-                logger.info(f"Morning fallback: added {len(fallback_morning[:shortfall])} later slots to ensure hot water.")
+            window_all = [s for s in unblocked_rates if predicate(self._local_start(s))]
+            if not window_all:
+                logger.warning("No %s rate data is available for the readiness window.", label.lower())
+                return
 
-        # --- STEP 2: Secure Afternoon Boost (14:00 - 16:00) ---
-        selected_morning_ids = {f"{s['valid_from']}" for s in selected_morning}
-        afternoon_candidates = []
-        for slot in eligible:
-            h = self._local_start(slot).hour
-            if 14 <= h < 16 and f"{slot['valid_from']}" not in selected_morning_ids:
-                afternoon_candidates.append(slot)
+            window_preferred = [s for s in window_all if s['value_inc_vat'] <= preferred_cap]
+            preferred_chosen = take(window_preferred, needed, sort_key)
+            remaining = needed - len(preferred_chosen)
+            if remaining > 0:
+                fallback = take(window_all, remaining, sort_key)
+                fallback_selected.extend(fallback)
+                over_cap_count = sum(s['value_inc_vat'] > preferred_cap for s in fallback)
+                if fallback:
+                    logger.warning(
+                        "%s hot-water fallback selected %s extra slot(s); %s are above "
+                        "the preferred %.2fp cap.",
+                        label,
+                        len(fallback),
+                        over_cap_count,
+                        preferred_cap,
+                    )
 
-        afternoon_candidates.sort(key=lambda s: s['value_inc_vat'])
-        selected_afternoon = afternoon_candidates[:afternoon_slots_needed]
+        # Preserve readiness priorities without exceeding the daily allowance.
+        fill_readiness_window(
+            lambda local: 0 <= local.hour < 6,
+            4,
+            price_then_later,
+            "Morning",
+        )
+        fill_readiness_window(
+            lambda local: 14 <= local.hour < 16,
+            2,
+            price_then_time,
+            "Afternoon",
+        )
+        fill_readiness_window(
+            lambda local: 19 <= local.hour < 23 or (local.hour == 23 and local.minute < 30),
+            2,
+            price_then_time,
+            "Evening",
+        )
 
-        # --- STEP 3: Secure Evening Boost (19:00 - 23:30) ---
-        already_selected_ids = {f"{s['valid_from']}" for s in selected_morning + selected_afternoon}
-        evening_candidates = []
-        for slot in eligible:
-            local_start = self._local_start(slot)
-            h = local_start.hour
-            m = local_start.minute
-            if (19 <= h < 23 or (h == 23 and m < 30)) and f"{slot['valid_from']}" not in already_selected_ids:
-                evening_candidates.append(slot)
-
-        evening_candidates.sort(key=lambda s: s['value_inc_vat'])
-        selected_evening = evening_candidates[:evening_slots_needed]
-
-        # --- STEP 4: Fill Logic (Rest of Day) ---
-        remaining_slots_count = total_slots_needed - len(selected_morning) - len(selected_afternoon) - len(selected_evening)
-        if remaining_slots_count < 0:
-            remaining_slots_count = 0
-
-        all_selected_ids = {f"{s['valid_from']}" for s in selected_morning + selected_afternoon + selected_evening}
-
-        remaining_candidates = [
-            s for s in eligible
-            if f"{s['valid_from']}" not in all_selected_ids
-            and s['value_inc_vat'] <= strict_threshold
+        # Fill discretionary capacity with rates that satisfy the strict
+        # preference (below daily average and/or the configured ceiling).
+        remaining = target_slots - len(selected)
+        strict_candidates = [
+            s for s in preferred_rates if s['value_inc_vat'] <= strict_threshold
         ]
+        take(strict_candidates, remaining, price_then_later)
 
-        def effective_price(slot):
-            price = slot['value_inc_vat']
-            hour_index = self._local_start(slot).hour
-            return price - (0.01 * hour_index)
+        # If preferences cannot supply the daily allowance, use the cheapest
+        # remaining unblocked slots. This prevents a zero-heating day.
+        remaining = target_slots - len(selected)
+        if remaining > 0:
+            fallback = take(unblocked_rates, remaining, price_then_later)
+            fallback_selected.extend(fallback)
 
-        remaining_candidates.sort(key=effective_price)
-        selected_rest = remaining_candidates[:remaining_slots_count]
+        selected.sort(key=lambda s: s['valid_from'])
+        self.last_schedule_computation = datetime.now(timezone.utc)
 
-        # Combine
-        final_selection = selected_morning + selected_afternoon + selected_evening + selected_rest
-        final_selection.sort(key=lambda s: s['valid_from'])
-        
-        self._log_schedule_summary(target_date, final_selection, rejected_expensive, rejected_blocked, strict_threshold, daily_avg)
-        
-        return final_selection
+        if len(selected) < target_slots:
+            logger.warning(
+                "Only %s/%s requested heating slots could be scheduled because "
+                "the tariff response contained too few unblocked rows.",
+                len(selected),
+                target_slots,
+            )
 
-    def _log_schedule_summary(self, target_date, selected, rejected_expensive, rejected_blocked, threshold, daily_avg):
+        self._log_schedule_summary(
+            target_date,
+            selected,
+            above_cap,
+            rejected_blocked,
+            strict_threshold,
+            preferred_cap,
+            daily_avg,
+            target_slots,
+            fallback_selected,
+        )
+        return selected
+
+    def _log_schedule_summary(
+        self,
+        target_date,
+        selected,
+        above_cap,
+        rejected_blocked,
+        threshold,
+        preferred_cap,
+        daily_avg,
+        target_slots,
+        fallback_selected,
+    ):
         """Logs a clear summary of the computed schedule."""
         logger.info("=" * 60)
         logger.info(f"SMART SCHEDULE COMPUTED FOR {target_date}")
         logger.info("=" * 60)
         logger.info(f"Daily Average: {daily_avg:.2f}p | Price Threshold: {threshold:.2f}p")
-        logger.info(f"Budget: {len(selected) * 0.5:.1f} hours ({len(selected)} x 30-min slots)")
+        logger.info(
+            "Scheduled: %.1f / %.1f hours (%s/%s x 30-min slots)",
+            len(selected) * 0.5,
+            target_slots * 0.5,
+            len(selected),
+            target_slots,
+        )
         logger.info("")
 
         if selected:
@@ -208,12 +243,34 @@ class SmartScheduler:
 
             avg_cost = total_cost / len(selected)
             logger.info(f"\nAverage slot price: {avg_cost:.2f}p")
-            logger.info(f"Estimated heating cost: {(total_cost * 3 / 100):.2f} GBP (assuming 3kW heater)")
+            # Each tariff row is 30 minutes, so a 3 kW element consumes at
+            # most 1.5 kWh per selected slot before its thermostat cuts out.
+            logger.info(f"Estimated heating cost: {(total_cost * 1.5 / 100):.2f} GBP (assuming 3kW heater)")
+        elif target_slots == 0:
+            logger.info("No slots selected because the configured daily allowance is zero.")
         else:
-            logger.warning("NO SLOTS SELECTED - Check configuration!")
+            logger.warning("NO SLOTS SELECTED - no unblocked rate data is available for this date.")
 
-        if rejected_expensive:
-            logger.info(f"\nRejected (above {threshold:.1f}p): {len(rejected_expensive)} slots")
+        selected_above_cap = [s for s in selected if s['value_inc_vat'] > preferred_cap]
+        if selected_above_cap:
+            prices = [s['value_inc_vat'] for s in selected_above_cap]
+            logger.warning(
+                "\nPRICE-CAP FALLBACK ACTIVE: %s selected slot(s) exceed %.1fp "
+                "(range %.2f-%.2fp)",
+                len(selected_above_cap),
+                preferred_cap,
+                min(prices),
+                max(prices),
+            )
+        elif fallback_selected:
+            logger.info(
+                "Price-preference fallback used %s slot(s) above the strict %.1fp threshold.",
+                len(fallback_selected),
+                threshold,
+            )
+
+        if above_cap:
+            logger.info(f"\nAvailable above preferred {preferred_cap:.1f}p cap: {len(above_cap)} slots")
 
         if rejected_blocked:
             logger.info(f"Rejected (blocked hours): {len(rejected_blocked)} slots")
@@ -276,3 +333,4 @@ class SmartScheduler:
             "slot_count": len(self.current_schedule),
             "total_hours": len(self.current_schedule) * 0.5
         }
+
