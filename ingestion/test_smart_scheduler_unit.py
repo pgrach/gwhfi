@@ -89,20 +89,118 @@ class SmartSchedulerBudgetSemanticsTests(unittest.TestCase):
             blocked_hours=[],
         )
 
-    def test_current_fixed_windows_select_four_hours_despite_half_hour_budget(self):
-        """Document current behavior until the scheduling policy is redesigned."""
+    def test_daily_heating_budget_caps_fixed_windows(self):
         selected = self.compute_with_half_hour_budget()
 
-        self.assertEqual(selected, self.fixed_window_rates)
-        self.assertEqual(len(selected) * 0.5, 4.0)
+        self.assertEqual(selected, [self.fixed_window_rates[3]])
+        self.assertEqual(len(selected) * 0.5, 0.5)
 
-    @unittest.expectedFailure
-    def test_daily_heating_budget_should_cap_total_selected_duration(self):
-        """Known defect: fixed windows currently override the configured budget."""
-        selected = self.compute_with_half_hour_budget()
 
-        self.assertLessEqual(len(selected) * 0.5, 0.5)
+class SmartSchedulerHighPriceFallbackTests(unittest.TestCase):
+    def setUp(self):
+        self.scheduler = SmartScheduler(SchedulerConfig)
+        self.target_date = date(2026, 8, 11)
+
+    def compute(self, rates, budget_hours=5.0, blocked_hours=None, not_before=None):
+        return self.scheduler.compute_schedule_for_date(
+            target_date=self.target_date,
+            rates=rates,
+            budget_hours=budget_hours,
+            max_price=30.0,
+            use_below_average=True,
+            blocked_hours=blocked_hours or [],
+            not_before=not_before,
+        )
+
+    def test_all_expensive_rates_still_fill_daily_allowance(self):
+        readiness = [
+            rate("2026-08-10T23:00:00", 50.0),  # 00:00 local
+            rate("2026-08-10T23:30:00", 45.0),  # 00:30 local
+            rate("2026-08-11T00:00:00", 43.0),  # 01:00 local
+            rate("2026-08-11T00:30:00", 41.0),  # 01:30 local
+            rate("2026-08-11T13:00:00", 55.0),  # 14:00 local
+            rate("2026-08-11T13:30:00", 52.0),  # 14:30 local
+            rate("2026-08-11T18:00:00", 60.0),  # 19:00 local
+            rate("2026-08-11T18:30:00", 58.0),  # 19:30 local
+        ]
+        discretionary = [
+            rate("2026-08-11T09:00:00", 34.0),  # 10:00 local
+            rate("2026-08-11T09:30:00", 35.0),  # 10:30 local
+            rate("2026-08-11T10:00:00", 36.0),  # 11:00 local
+            rate("2026-08-11T10:30:00", 37.0),  # 11:30 local
+        ]
+        blocked_bargain = rate("2026-08-11T15:00:00", 1.0)  # 16:00 local
+
+        selected = self.compute(
+            readiness + discretionary + [blocked_bargain],
+            blocked_hours=[16],
+        )
+
+        self.assertEqual(len(selected), 10)
+        self.assertEqual(len({slot["valid_from"] for slot in selected}), 10)
+        self.assertTrue(all(slot["value_inc_vat"] > 30.0 for slot in selected))
+        self.assertTrue(all(slot in selected for slot in readiness))
+        self.assertIn(discretionary[0], selected)
+        self.assertIn(discretionary[1], selected)
+        self.assertNotIn(discretionary[2], selected)
+        self.assertNotIn(discretionary[3], selected)
+        self.assertNotIn(blocked_bargain, selected)
+
+    def test_partial_preferred_supply_is_topped_up_above_cap(self):
+        rates = [
+            rate("2026-08-10T23:00:00", 20.0),
+            rate("2026-08-10T23:30:00", 21.0),
+            rate("2026-08-11T00:00:00", 40.0),
+            rate("2026-08-11T00:30:00", 41.0),
+        ]
+
+        selected = self.compute(rates, budget_hours=2.0)
+
+        self.assertEqual(len(selected), 4)
+        self.assertEqual(
+            {slot["valid_from"] for slot in selected},
+            {slot["valid_from"] for slot in rates},
+        )
+
+    def test_zero_budget_selects_no_slots(self):
+        selected = self.compute([rate("2026-08-10T23:00:00", 40.0)], budget_hours=0)
+
+        self.assertEqual(selected, [])
+
+    def test_insufficient_rates_selects_every_unblocked_slot_without_duplicates(self):
+        available = [
+            rate("2026-08-10T23:00:00", 40.0),
+            rate("2026-08-11T13:00:00", 45.0),
+            rate("2026-08-11T18:00:00", 50.0),
+        ]
+
+        selected = self.compute(available, budget_hours=5.0)
+
+        self.assertEqual(selected, available)
+
+    def test_same_day_recompute_does_not_spend_budget_on_expired_slots(self):
+        expired = [
+            rate("2026-08-10T23:00:00", 10.0),
+            rate("2026-08-10T23:30:00", 11.0),
+            rate("2026-08-11T00:00:00", 12.0),
+            rate("2026-08-11T00:30:00", 13.0),
+        ]
+        future = [
+            rate("2026-08-11T13:00:00", 40.0),
+            rate("2026-08-11T13:30:00", 41.0),
+            rate("2026-08-11T18:00:00", 42.0),
+            rate("2026-08-11T18:30:00", 43.0),
+        ]
+        as_of = datetime(2026, 8, 11, 12, 0, tzinfo=timezone.utc)
+
+        selected = self.compute(expired + future, budget_hours=2.0, not_before=as_of)
+
+        self.assertEqual(
+            {slot["valid_from"] for slot in selected},
+            {slot["valid_from"] for slot in future},
+        )
 
 
 if __name__ == "__main__":
     unittest.main()
+
