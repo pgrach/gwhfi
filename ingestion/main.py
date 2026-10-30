@@ -131,7 +131,8 @@ class SmartWaterController:
             budget_hours=Config.DAILY_HEATING_BUDGET_HOURS,
             max_price=Config.ABSOLUTE_MAX_PRICE,
             use_below_average=Config.USE_BELOW_AVERAGE,
-            blocked_hours=Config.BLOCKED_HOURS
+            blocked_hours=Config.BLOCKED_HOURS,
+            not_before=now,
         )
         
         tomorrow_slots = []
@@ -531,3 +532,4 @@ if __name__ == "__main__":
         logger.warning("Starting Service in LIVE mode. Heater commands are enabled.")
     controller = SmartWaterController(dry_run=Config.DRY_RUN)
     controller.run()
+
