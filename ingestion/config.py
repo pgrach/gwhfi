@@ -139,7 +139,59 @@ class Config:
         ABSOLUTE_MAX_PRICE = 30.0
 
     USE_BELOW_AVERAGE = os.getenv('USE_BELOW_AVERAGE', 'true').lower() == 'true'
-    SMART_COOLDOWN_ENABLED = os.getenv('SMART_COOLDOWN_ENABLED', 'false').lower() == 'true'
+
+    # Thermostat-cycle inference is deployed in shadow mode first.  `live` is
+    # the only value allowed to suppress a scheduled heating request.
+    THERMOSTAT_CONTROL_MODE = os.getenv('THERMOSTAT_CONTROL_MODE', 'off').strip().lower()
+    if THERMOSTAT_CONTROL_MODE not in {'off', 'shadow', 'live'}:
+        THERMOSTAT_CONTROL_MODE = 'off'
+    SMART_COOLDOWN_ENABLED = THERMOSTAT_CONTROL_MODE == 'live'  # legacy status alias
+    THERMOSTAT_POWER_ON_THRESHOLD_W = clamped_int_env(
+        'THERMOSTAT_POWER_ON_THRESHOLD_W', 2000, 1000, 4000
+    )
+    THERMOSTAT_POWER_OFF_THRESHOLD_W = clamped_int_env(
+        'THERMOSTAT_POWER_OFF_THRESHOLD_W', 100, 0, 500
+    )
+    if THERMOSTAT_POWER_OFF_THRESHOLD_W >= THERMOSTAT_POWER_ON_THRESHOLD_W:
+        THERMOSTAT_POWER_OFF_THRESHOLD_W = 100
+        THERMOSTAT_POWER_ON_THRESHOLD_W = 2000
+    THERMOSTAT_MIN_REAL_HEAT_MINUTES = clamped_int_env(
+        'THERMOSTAT_MIN_REAL_HEAT_MINUTES', 10, 5, 60
+    )
+    THERMOSTAT_MIN_REAL_HEAT_WH = clamped_int_env(
+        'THERMOSTAT_MIN_REAL_HEAT_WH', 250, 100, 3000
+    )
+    THERMOSTAT_LOW_SAMPLES_REQUIRED = clamped_int_env(
+        'THERMOSTAT_LOW_SAMPLES_REQUIRED', 2, 2, 5
+    )
+    THERMOSTAT_CHATTER_WINDOW_MINUTES = clamped_int_env(
+        'THERMOSTAT_CHATTER_WINDOW_MINUTES', 12, 6, 30
+    )
+    THERMOSTAT_MIN_CHATTER_TRANSITIONS = clamped_int_env(
+        'THERMOSTAT_MIN_CHATTER_TRANSITIONS', 3, 3, 12
+    )
+    THERMOSTAT_MAX_TOPUP_BURST_MINUTES = clamped_int_env(
+        'THERMOSTAT_MAX_TOPUP_BURST_MINUTES', 3, 1, 10
+    )
+    THERMOSTAT_MIN_COOLDOWN_MINUTES = clamped_int_env(
+        'THERMOSTAT_MIN_COOLDOWN_MINUTES', 120, 30, 360
+    )
+    THERMOSTAT_MAX_DEFERRAL_MINUTES = clamped_int_env(
+        'THERMOSTAT_MAX_DEFERRAL_MINUTES', 240, 60, 720
+    )
+    if THERMOSTAT_MAX_DEFERRAL_MINUTES < THERMOSTAT_MIN_COOLDOWN_MINUTES:
+        THERMOSTAT_MAX_DEFERRAL_MINUTES = THERMOSTAT_MIN_COOLDOWN_MINUTES
+    THERMOSTAT_PROBE_SUCCESS_MINUTES = clamped_int_env(
+        'THERMOSTAT_PROBE_SUCCESS_MINUTES', 10, 5, 30
+    )
+    THERMOSTAT_PROBE_SHORT_MINUTES = clamped_int_env(
+        'THERMOSTAT_PROBE_SHORT_MINUTES', 3, 1, 10
+    )
+    THERMOSTAT_MAX_SAMPLE_GAP_MINUTES = clamped_int_env(
+        'THERMOSTAT_MAX_SAMPLE_GAP_MINUTES', 3, 2, 10
+    )
+    THERMOSTAT_POLICY_VERSION = 1
+    TELEMETRY_SITE_ID = os.getenv('TELEMETRY_SITE_ID', 'home').strip() or 'home'
 
     MAIN_HEATER_CONTROL = os.getenv('MAIN_HEATER_CONTROL', 'tuya').lower()
     SECOND_HEATER_CONTROL = os.getenv('SECOND_HEATER_CONTROL', 'tuya').lower()

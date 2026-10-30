@@ -61,8 +61,8 @@ Migration, compatibility, and access-control details are documented in
 *   **Smart Scheduling**: Daily heating slots are calculated based on the cheapest Octopus Agile rates.
 *   **Afternoon Boost**: Ensures at least 1 hour of heating between 14:00-16:00 (lowest price in window) to provide hot water for the evening.
 *   **Peak Heating**: The main heater runs only during negative pricing or extreme lows.
-*   **Smart Cooldown**: If the heater is ON but the Shelly sensor reports <10W (tank full), the system forces a 90-minute cooldown to save energy.
-*   **Grace Period**: The system ignores "0 Watt" readings for the first 30 minutes after a blocked period (16:00-19:00) to allow for mechanical timer drift.
+*   **Thermostat-cycle inference**: After confirmed real heating, repeated low-power or short-cycle evidence marks the tank satisfied. The controller can hold the relay off, then probe a later scheduled slot for renewed demand.
+*   **Fail-open rollout**: `shadow` records would-suppress decisions without changing the relay. `live` is explicit and restores persisted holds across Railway restarts.
 
 ### 🚀 How to Run (Production)
 
@@ -77,7 +77,7 @@ Ensure your `.env` (or Railway variables) includes:
 *   Local Tuya control only works when this Python controller runs on the same LAN as the heater switches, unless the LAN is reachable over a VPN/tunnel.
 *   Optional Shelly off-peak relay control: set `SECOND_HEATER_CONTROL=shelly`, `SHELLY_RELAY_DEVICE_ID`, and `SHELLY_RELAY_CHANNEL_SECOND=0` only after the Shelly Pro 1 is physically verified to switch the storage heater or its contactor. Keep the existing energy meter under `SHELLY_METER_DEVICE_ID`.
 *   Give Railway a stable `TELEMETRY_SITE_ID` and set Vercel's `NEXT_PUBLIC_TELEMETRY_SITE_ID` and `NEXT_PUBLIC_SHELLY_METER_DEVICE_ID` to the same site/meter values used by Railway. When both public values are set, live readings, history totals, and downsampled charts are restricted to that property and meter. Leaving them unset temporarily preserves the legacy unscoped queries during rollout.
-*   `SMART_COOLDOWN_ENABLED=false` (default). Set to `true` only if low Shelly power should turn the storage heater off for cooldown during an active slot.
+*   `THERMOSTAT_CONTROL_MODE=off|shadow|live` (`off` default). Commission in `shadow`; promote to `live` only after the persisted decisions have been reviewed against power telemetry.
 *   `STRICT_TIME_CHECK=false` (default). Set to `true` only if the controller should abort when NTP is unreachable.
 *   (Optional, for landing page pilot lead notifications) `RESEND_API_KEY`, `LEADS_FROM_EMAIL`, `LEADS_TO_EMAIL`
 *   **Important**: If Tuya control stops working, run `python diagnose.py` and verify your **IoT Core Trial/API subscription** has not expired or exhausted quota in the Tuya Console.

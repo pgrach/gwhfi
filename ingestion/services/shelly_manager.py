@@ -1,5 +1,6 @@
 import requests
 import logging
+import math
 import threading
 import time
 from config import Config
@@ -89,15 +90,31 @@ class ShellyManager:
             return None
         return device.get("status") or {}
 
-    def get_power(self, channel=0):
-        """Returns the current power (W) for the specified channel."""
+    @staticmethod
+    def _measurement_number(value):
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(number) or number < 0:
+            return None
+        return number
+
+    def get_meter_reading(self, channel=0):
+        """Return power and cumulative energy from one Shelly Cloud request."""
         status = self.get_status(self.meter_device_id)
         if not status:
             return None
 
         emeters = status.get("emeters", [])
-        if channel < len(emeters):
-            return emeters[channel].get("power", 0.0)
+        if channel < len(emeters) and isinstance(emeters[channel], dict):
+            power = self._measurement_number(emeters[channel].get("power"))
+            if power is None:
+                return None
+            return {
+                "power_w": power,
+                "energy_total_wh": self._measurement_number(emeters[channel].get("total")),
+            }
 
         # Gen2 energy-meter component shapes.
         for component, field in (
@@ -105,11 +122,25 @@ class ShellyManager:
             (f"em1:{channel}", "act_power"),
             (f"switch:{channel}", "apower"),
         ):
-            value = status.get(component, {}).get(field)
-            if value is not None:
-                return value
+            payload = status.get(component, {})
+            if not isinstance(payload, dict):
+                continue
+            power = self._measurement_number(payload.get(field))
+            if power is None:
+                continue
+            energy = payload.get("aenergy")
+            energy_total = energy.get("total") if isinstance(energy, dict) else None
+            return {
+                "power_w": power,
+                "energy_total_wh": self._measurement_number(energy_total),
+            }
 
         return None
+
+    def get_power(self, channel=0):
+        """Returns the current power (W) for the specified channel."""
+        reading = self.get_meter_reading(channel=channel)
+        return reading["power_w"] if reading else None
 
     def get_relay_status(self, channel=0):
         """Returns relay state for Shelly devices that expose relay outputs."""

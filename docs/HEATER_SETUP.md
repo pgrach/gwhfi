@@ -17,7 +17,7 @@ The controller defaults are set for the lower/storage heater:
 DRY_RUN=true
 STORAGE_HEATER_ENABLED=true
 OFF_PEAK_HEATER_TARGET=second
-SMART_COOLDOWN_ENABLED=false
+THERMOSTAT_CONTROL_MODE=off
 TUYA_CONTROL_MODE=cloud
 MAIN_HEATER_CONTROL=tuya
 SECOND_HEATER_CONTROL=tuya
@@ -28,7 +28,7 @@ With these defaults:
 - Heater commands are logged but not sent. Live control requires an explicit `DRY_RUN=false` after commissioning checks pass.
 - Off-peak scheduled slots drive Heater 2 / Storage / Lower heater (`channel 1`, green).
 - Peak/free-energy slots can still drive Heater 1 / Boost (`channel 0`, blue).
-- Smart cooldown is off by default so low/zero Shelly readings do not silently cancel an active scheduled slot.
+- Thermostat inference is off by default. Use `shadow` first so inferred tank-satisfied events cannot cancel an active scheduled slot.
 
 ## Railway State
 
@@ -39,7 +39,7 @@ Recommended Railway variables for the normal lower-heater setup:
 ```bash
 STORAGE_HEATER_ENABLED=true
 OFF_PEAK_HEATER_TARGET=second
-SMART_COOLDOWN_ENABLED=false
+THERMOSTAT_CONTROL_MODE=shadow
 TUYA_CONTROL_MODE=cloud
 MAIN_HEATER_CONTROL=tuya
 SECOND_HEATER_CONTROL=tuya
