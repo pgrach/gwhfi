@@ -61,9 +61,9 @@ class SmartScheduler:
 
         daily_rates = [r for r in rates if self._local_start(r).date() == target_date]
         if not_before is not None:
-            # A same-day recomputation must not spend the daily allowance on
-            # morning/afternoon slots that have already elapsed.
-            daily_rates = [r for r in daily_rates if r['valid_to'] > not_before]
+            # A late first computation must not count a partially elapsed
+            # tariff interval as a complete 30-minute heating slot.
+            daily_rates = [r for r in daily_rates if r['valid_from'] >= not_before]
         if not daily_rates:
             logger.warning(f"No rates found for target date: {target_date}")
             return []

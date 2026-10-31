@@ -200,6 +200,19 @@ class SmartSchedulerHighPriceFallbackTests(unittest.TestCase):
             {slot["valid_from"] for slot in future},
         )
 
+    def test_same_day_plan_does_not_reselect_a_partially_elapsed_slot(self):
+        active = rate("2026-08-11T11:50:00", 1.0)
+        future = rate("2026-08-11T12:30:00", 20.0)
+        as_of = datetime(2026, 8, 11, 12, 0, tzinfo=timezone.utc)
+
+        selected = self.compute(
+            [active, future],
+            budget_hours=0.5,
+            not_before=as_of,
+        )
+
+        self.assertEqual(selected, [future])
+
 
 if __name__ == "__main__":
     unittest.main()

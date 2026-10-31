@@ -148,33 +148,33 @@ class ScheduleStorage:
             to_time: Optional end time filter (datetime or ISO string)
 
         Returns:
-            List of schedule slots or empty list on error
+            List of schedule slots, or ``None`` when the read failed. An empty
+            list is reserved for a successful query that found no rows so the
+            controller can distinguish "no plan yet" from "plan unknown".
         """
         if not self.enabled:
             return []
 
         try:
             url = f"{self.supabase_url}/rest/v1/heating_schedule"
-            params = ["select=*"]
+            params = {"select": "*", "order": "slot_start.asc"}
 
             if heater_type:
-                params.append(f"heater_type=eq.{heater_type}")
+                params["heater_type"] = f"eq.{heater_type}"
 
             if from_time:
                 if hasattr(from_time, 'isoformat'):
                     from_time = from_time.isoformat()
-                params.append(f"slot_start=gte.{from_time}")
+                params["slot_start"] = f"gte.{from_time}"
 
             if to_time:
                 if hasattr(to_time, 'isoformat'):
                     to_time = to_time.isoformat()
-                params.append(f"slot_end=lte.{to_time}")
+                params["slot_end"] = f"lte.{to_time}"
 
-            params.append("order=slot_start.asc")
-
-            query_string = "&".join(params)
             response = requests.get(
-                f"{url}?{query_string}",
+                url,
+                params=params,
                 headers=self.headers,
                 timeout=15,
             )
@@ -183,8 +183,8 @@ class ScheduleStorage:
                 return response.json()
             else:
                 logger.error(f"Failed to fetch schedule: {response.status_code}")
-                return []
+                return None
 
         except Exception as e:
             logger.error(f"Error fetching schedule from Supabase: {e}")
-            return []
+            return None

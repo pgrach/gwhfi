@@ -135,6 +135,49 @@ class SmartWaterController:
             logger.debug(f"Rate check triggered: {reason}")
         return should_check
 
+    def _local_day_bounds_utc(self, local_date):
+        """Return the UTC instants bounding one local calendar date."""
+        local_start = self.time_service.timezone.localize(
+            datetime.combine(local_date, datetime.min.time())
+        )
+        local_end = self.time_service.timezone.localize(
+            datetime.combine(local_date + timedelta(days=1), datetime.min.time())
+        )
+        return local_start.astimezone(timezone.utc), local_end.astimezone(timezone.utc)
+
+    @staticmethod
+    def _parse_schedule_timestamp(value):
+        if isinstance(value, datetime):
+            parsed = value
+        else:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
+    def _stored_schedule_to_slots(self, rows):
+        """Convert persisted Supabase rows back to scheduler slot objects."""
+        slots_by_start = {}
+        for row in rows:
+            try:
+                valid_from = self._parse_schedule_timestamp(row["slot_start"])
+                slots_by_start[valid_from] = {
+                    "valid_from": valid_from,
+                    "valid_to": self._parse_schedule_timestamp(row["slot_end"]),
+                    "value_inc_vat": float(row["price"]),
+                }
+            except (KeyError, TypeError, ValueError):
+                logger.warning("Ignoring malformed persisted schedule row: %s", row)
+        return sorted(slots_by_start.values(), key=lambda slot: slot["valid_from"])
+
+    def _slots_for_local_date(self, slots, target_date):
+        return [
+            slot
+            for slot in slots
+            if slot["valid_from"].astimezone(self.time_service.timezone).date()
+            == target_date
+        ]
+
     def update_schedule(self):
         """
         Fetches rates and calculates heating slots using Smart Scheduler.
@@ -171,53 +214,158 @@ class SmartWaterController:
             logger.info("Tomorrow's rates are now available! Computing optimized schedule...")
             self.scheduler.mark_tomorrow_scheduled()
 
-        # Compute optimal slots using Smart Scheduler for today and tomorrow separately
-        today_slots = self.scheduler.compute_schedule_for_date(
-            target_date=today,
-            rates=rates,
-            budget_hours=Config.DAILY_HEATING_BUDGET_HOURS,
-            max_price=Config.ABSOLUTE_MAX_PRICE,
-            use_below_average=Config.USE_BELOW_AVERAGE,
-            blocked_hours=Config.BLOCKED_HOURS,
-            not_before=now,
+        today_start, tomorrow_start = self._local_day_bounds_utc(today)
+        _, day_after_tomorrow_start = self._local_day_bounds_utc(tomorrow)
+
+        stored_rows = []
+        schedule_read_failed = False
+        if self.schedule_storage.enabled:
+            stored_rows = self.schedule_storage.get_schedule(
+                heater_type="off_peak",
+                from_time=today_start,
+                to_time=day_after_tomorrow_start,
+            )
+            schedule_read_failed = stored_rows is None
+
+        in_memory_today = self._slots_for_local_date(self.main_heater_slots, today)
+        in_memory_tomorrow = self._slots_for_local_date(
+            self.main_heater_slots, tomorrow
         )
-        
-        tomorrow_slots = []
-        if has_tomorrow:
-            tomorrow_slots = self.scheduler.compute_schedule_for_date(
+
+        if schedule_read_failed:
+            # Never mint a fresh full-day allowance when durable history is
+            # temporarily unavailable. Keep the active in-memory plan and try
+            # the read again on the next rate check.
+            if not in_memory_today:
+                logger.error(
+                    "Unable to load today's published heating plan; retaining the "
+                    "current empty schedule rather than risking duplicate heating."
+                )
+                return
+            logger.warning(
+                "Unable to refresh the published heating plan; using the current "
+                "in-memory schedule."
+            )
+            stored_today = []
+            stored_tomorrow = []
+        else:
+            stored_slots = self._stored_schedule_to_slots(stored_rows)
+            stored_today = self._slots_for_local_date(stored_slots, today)
+            stored_tomorrow = self._slots_for_local_date(stored_slots, tomorrow)
+
+        today_slots = stored_today or in_memory_today
+        today_was_computed = False
+        today_needs_persistence = bool(
+            self.schedule_storage.enabled
+            and not schedule_read_failed
+            and not stored_today
+            and in_memory_today
+        )
+        if today_slots:
+            logger.info(
+                "Reusing %s published heating slot(s) for %s; today's plan is "
+                "immutable.",
+                len(today_slots),
+                today,
+            )
+        else:
+            # This is the one legitimate same-day computation: no plan was
+            # published previously (for example after an overnight outage).
+            today_slots = self.scheduler.compute_schedule_for_date(
+                target_date=today,
+                rates=rates,
+                budget_hours=Config.DAILY_HEATING_BUDGET_HOURS,
+                max_price=Config.ABSOLUTE_MAX_PRICE,
+                use_below_average=Config.USE_BELOW_AVERAGE,
+                blocked_hours=Config.BLOCKED_HOURS,
+                not_before=now,
+            )
+            today_was_computed = True
+            today_needs_persistence = self.schedule_storage.enabled
+
+        published_tomorrow_slots = stored_tomorrow or in_memory_tomorrow
+        tomorrow_slots = published_tomorrow_slots
+        tomorrow_candidate = None
+        if has_tomorrow and not schedule_read_failed:
+            tomorrow_candidate = self.scheduler.compute_schedule_for_date(
                 target_date=tomorrow,
                 rates=rates,
                 budget_hours=Config.DAILY_HEATING_BUDGET_HOURS,
                 max_price=Config.ABSOLUTE_MAX_PRICE,
                 use_below_average=Config.USE_BELOW_AVERAGE,
-                blocked_hours=Config.BLOCKED_HOURS
+                blocked_hours=Config.BLOCKED_HOURS,
             )
-
-        self.main_heater_slots = today_slots + tomorrow_slots
-        self.scheduler.current_schedule = self.main_heater_slots
+        elif has_tomorrow and schedule_read_failed:
+            logger.warning(
+                "Tomorrow's plan was not recomputed because the published "
+                "schedule could not be read safely."
+            )
 
         # Peak Heater: Negative/free rate strategy (unchanged, uses future_rates)
         self.second_heater_slots = self.octopus.get_negative_rates(
             future_rates, Config.SECOND_HEATER_THRESHOLD
         )
 
-        # Replace the complete local today/tomorrow window so stale green dots
-        # cannot survive when a recomputation selects fewer (or zero) slots.
-        local_start = self.time_service.timezone.localize(datetime.combine(today, datetime.min.time()))
-        local_end = self.time_service.timezone.localize(datetime.combine(tomorrow + timedelta(days=1), datetime.min.time()))
-        replace_from = local_start.astimezone(timezone.utc)
-        replace_to = local_end.astimezone(timezone.utc)
-        off_peak_saved = self.schedule_storage.save_schedule(
-            self.main_heater_slots,
-            heater_type="off_peak",
-            replace_from=replace_from,
-            replace_to=replace_to,
+        # Once today's plan has been published, never rewrite it: those rows
+        # are the historical record used by the dashboard. Only a missing plan
+        # is created mid-day; routine refreshes replace tomorrow's future plan.
+        off_peak_saved = True
+        if today_needs_persistence:
+            today_saved = self.schedule_storage.save_schedule(
+                today_slots,
+                heater_type="off_peak",
+                replace_from=today_start,
+                replace_to=tomorrow_start,
+            )
+            off_peak_saved = today_saved
+            if not today_saved and today_was_computed:
+                # Do not control from a plan that the dashboard and a restarted
+                # controller cannot recover. With no prior plan this deliberately
+                # fails closed until persistence succeeds on a later refresh.
+                today_slots = in_memory_today
+                logger.error(
+                    "Today's new heating plan was not activated because it "
+                    "could not be persisted."
+                )
+            elif not today_saved:
+                logger.error(
+                    "Today's in-memory heating plan remains active, but its "
+                    "missing durable schedule could not be repaired."
+                )
+
+        if tomorrow_candidate is not None:
+            if self.schedule_storage.enabled:
+                tomorrow_saved = self.schedule_storage.save_schedule(
+                    tomorrow_candidate,
+                    heater_type="off_peak",
+                    replace_from=tomorrow_start,
+                    replace_to=day_after_tomorrow_start,
+                )
+                if tomorrow_saved:
+                    tomorrow_slots = tomorrow_candidate
+                else:
+                    tomorrow_slots = published_tomorrow_slots
+                    logger.error(
+                        "Tomorrow's new heating plan was not activated because "
+                        "it could not be persisted."
+                    )
+            else:
+                tomorrow_saved = True
+                tomorrow_slots = tomorrow_candidate
+            off_peak_saved = off_peak_saved and tomorrow_saved
+
+        self.main_heater_slots = sorted(
+            today_slots + tomorrow_slots,
+            key=lambda slot: slot["valid_from"],
         )
+        self.scheduler.current_schedule = self.main_heater_slots
+
+        # Peak/free-rate scheduling remains dynamic and is stored separately.
         peak_saved = self.schedule_storage.save_schedule(
             self.second_heater_slots,
             heater_type="peak",
-            replace_from=replace_from,
-            replace_to=replace_to,
+            replace_from=today_start,
+            replace_to=day_after_tomorrow_start,
         )
         if self.schedule_storage.enabled and not (off_peak_saved and peak_saved):
             logger.error(

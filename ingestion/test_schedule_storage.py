@@ -63,6 +63,53 @@ class ScheduleStorageReplacementTests(unittest.TestCase):
         self.assertFalse(result)
         post_mock.assert_not_called()
 
+    def test_schedule_read_failure_is_distinct_from_successful_empty_result(self):
+        storage = self.make_storage()
+        failure = types.SimpleNamespace(status_code=503, json=lambda: [])
+        success = types.SimpleNamespace(status_code=200, json=lambda: [])
+
+        with patch.object(
+            schedule_storage.requests,
+            "get",
+            side_effect=[failure, success],
+            create=True,
+        ):
+            failed_rows = storage.get_schedule(heater_type="off_peak")
+            empty_rows = storage.get_schedule(heater_type="off_peak")
+
+        self.assertIsNone(failed_rows)
+        self.assertEqual(empty_rows, [])
+
+    def test_schedule_read_uses_encoded_request_params_for_utc_boundaries(self):
+        storage = self.make_storage()
+        response = types.SimpleNamespace(status_code=200, json=lambda: [])
+        start = datetime(2026, 10, 31, tzinfo=timezone.utc)
+        end = start + timedelta(days=1)
+
+        with patch.object(
+            schedule_storage.requests,
+            "get",
+            return_value=response,
+            create=True,
+        ) as get_mock:
+            storage.get_schedule(
+                heater_type="off_peak",
+                from_time=start,
+                to_time=end,
+            )
+
+        request = get_mock.call_args
+        self.assertEqual(request.args[0], "https://example.supabase.co/rest/v1/heating_schedule")
+        self.assertEqual(request.kwargs["params"]["heater_type"], "eq.off_peak")
+        self.assertEqual(
+            request.kwargs["params"]["slot_start"],
+            "gte.2026-10-31T00:00:00+00:00",
+        )
+        self.assertEqual(
+            request.kwargs["params"]["slot_end"],
+            "lte.2026-11-01T00:00:00+00:00",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
