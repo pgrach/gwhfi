@@ -10,11 +10,18 @@ import {
 } from "@/lib/telemetry-scope"
 import { fetchCompleteDownsampledRange } from "@/lib/downsampled-readings"
 import { planAnalyticsRanges } from "@/lib/analytics-ranges"
+import {
+    evaluateStorageSavings,
+    ORBIS_BASELINE_METADATA,
+    type StorageSavingsStatus,
+} from "@/lib/heater-savings"
 
 const OCTOPUS_BASE = OCTOPUS_RATES_URL
 // Five-minute counter buckets keep a 30-day response compact while limiting
 // tariff-boundary allocation uncertainty for short thermostat cycles.
 const COUNTER_SERIES_BUCKET_SECONDS = 5 * 60
+const MIN_PRICED_COVERAGE = 0.99
+const SMART_STORAGE_CONTROL_START_DATE = "2026-08-12"
 
 interface RateApiResult {
     value_inc_vat: number
@@ -47,9 +54,44 @@ interface WindowResult {
     coverage_ratio: number
 }
 
+interface WindowCalculation {
+    avgPaidPencePerKwh: number | null
+    totalKwhPriced: number
+    totalKwhMeasured: number
+    totalCostGbp: number
+    coverageRatio: number
+}
+
+interface StorageSavingsBaseline {
+    version: string
+    start: string
+    end: string
+    sample_days: number
+    method: "same_measured_kwh_repriced_with_verified_orbis_timing"
+    excluded_local_window: string
+    smart_control_start: string
+}
+
+interface StorageSavingsComparison {
+    status: StorageSavingsStatus
+    actual_avg_ppkwh: number | null
+    actual_cost_gbp: number
+    without_algorithm_avg_ppkwh: number | null
+    without_algorithm_cost_gbp: number | null
+    saved_gbp: number | null
+    saved_percent: number | null
+    actual_kwh: number
+    coverage_ratio: number
+    baseline: StorageSavingsBaseline
+}
+
+interface WindowWithSavings extends WindowResult {
+    storage_savings: StorageSavingsComparison
+}
+
 interface SelectedDayResult {
     date: string
-    window: WindowResult
+    window: WindowWithSavings
 }
 
 interface OctopusResponse {
@@ -59,6 +101,31 @@ interface OctopusResponse {
 
 function round(value: number, digits: number): number {
     return Number(value.toFixed(digits))
+}
+
+function shiftCalendarDate(date: string, dayOffset: number): string {
+    const [year, month, day] = date.split("-").map(Number)
+    const shifted = new Date(Date.UTC(year, month - 1, day + dayOffset, 12))
+    return shifted.toISOString().slice(0, 10)
+}
+
+function calendarDatesEndingOn(endDate: string, count: number): string[] {
+    return Array.from(
+        { length: count },
+        (_, index) => shiftCalendarDate(endDate, index - count + 1),
+    )
+}
+
+function storageSavingsBaseline(): StorageSavingsBaseline {
+    return {
+        version: ORBIS_BASELINE_METADATA.artifactVersion,
+        start: ORBIS_BASELINE_METADATA.baselineStart,
+        end: ORBIS_BASELINE_METADATA.baselineEnd,
+        sample_days: ORBIS_BASELINE_METADATA.sampleDays.all,
+        method: "same_measured_kwh_repriced_with_verified_orbis_timing",
+        excluded_local_window: ORBIS_BASELINE_METADATA.excludedLocalWindow,
+        smart_control_start: SMART_STORAGE_CONTROL_START_DATE,
+    }
 }
 
 function overlaps(aStart: number, aEnd: number, bStart: number, bEnd: number): boolean {
@@ -262,12 +329,12 @@ async function fetchAnalyticsRange(
     return { rates, readingsByChannel }
 }
 
-function computeWindowResult(
+function computeWindowCalculation(
     rates: RateInterval[],
     readingsByChannel: EnergyReading[][],
     startMs: number,
     endMs: number
-): WindowResult {
+): WindowCalculation {
     let totalCostPence = 0
     let totalKwhPriced = 0
     let totalKwhMeasured = 0
@@ -335,11 +402,108 @@ function computeWindowResult(
     const coverage = totalKwhMeasured > 0 ? totalKwhPriced / totalKwhMeasured : 0
 
     return {
-        avg_paid_ppkwh: avgPaid === null ? null : round(avgPaid, 3),
-        total_kwh_priced: round(totalKwhPriced, 3),
-        total_kwh_measured: round(totalKwhMeasured, 3),
-        total_cost_gbp: round(totalCostPence / 100, 2),
-        coverage_ratio: round(coverage, 4),
+        avgPaidPencePerKwh: avgPaid,
+        totalKwhPriced,
+        totalKwhMeasured,
+        totalCostGbp: totalCostPence / 100,
+        coverageRatio: coverage,
+    }
+}
+
+function serializeWindowResult(calculation: WindowCalculation): WindowResult {
+    return {
+        avg_paid_ppkwh: calculation.avgPaidPencePerKwh === null
+            ? null
+            : round(calculation.avgPaidPencePerKwh, 3),
+        total_kwh_priced: round(calculation.totalKwhPriced, 3),
+        total_kwh_measured: round(calculation.totalKwhMeasured, 3),
+        total_cost_gbp: round(calculation.totalCostGbp, 2),
+        coverage_ratio: round(calculation.coverageRatio, 4),
+    }
+}
+
+function computeStorageSavings(
+    rates: RateInterval[],
+    storageReadings: EnergyReading[],
+    localDates: string[],
+): StorageSavingsComparison {
+    if (localDates.length === 0) {
+        throw new Error("Storage-savings windows require at least one UK calendar date")
+    }
+
+    const evaluation = evaluateStorageSavings({
+        smartControlStartDate: SMART_STORAGE_CONTROL_START_DATE,
+        minimumCoverageRatio: MIN_PRICED_COVERAGE,
+        days: localDates.map((localDate) => {
+            const bounds = getUKDateBoundariesForDate(localDate)
+            const dayActual = computeWindowCalculation(
+                rates,
+                [storageReadings],
+                bounds.start.getTime(),
+                bounds.end.getTime(),
+            )
+
+            const dayRates = rates
+                .filter((rate) => overlaps(
+                    rate.fromMs,
+                    rate.toMs,
+                    bounds.start.getTime(),
+                    bounds.end.getTime(),
+                ))
+                .map((rate) => ({
+                    valid_from: new Date(rate.fromMs).toISOString(),
+                    valid_to: new Date(rate.toMs).toISOString(),
+                    value_inc_vat: rate.valueIncVat,
+                }))
+
+            return {
+                localDate,
+                measuredKwh: dayActual.totalKwhMeasured,
+                pricedKwh: dayActual.totalKwhPriced,
+                actualCostGbp: dayActual.totalCostGbp,
+                tariffIntervals: dayRates,
+            }
+        }),
+    })
+
+    return {
+        status: evaluation.status,
+        actual_avg_ppkwh: evaluation.actualAveragePencePerKwh === null
+            ? null
+            : round(evaluation.actualAveragePencePerKwh, 3),
+        actual_cost_gbp: round(evaluation.actualCostGbp, 2),
+        without_algorithm_avg_ppkwh:
+            evaluation.withoutAlgorithmAveragePencePerKwh === null
+                ? null
+                : round(evaluation.withoutAlgorithmAveragePencePerKwh, 3),
+        without_algorithm_cost_gbp: evaluation.withoutAlgorithmCostGbp === null
+            ? null
+            : round(evaluation.withoutAlgorithmCostGbp, 2),
+        saved_gbp: evaluation.savedGbp === null ? null : round(evaluation.savedGbp, 2),
+        saved_percent: evaluation.savedPercent === null
+            ? null
+            : round(evaluation.savedPercent, 1),
+        actual_kwh: round(evaluation.pricedKwh, 3),
+        coverage_ratio: round(evaluation.coverageRatio, 4),
+        baseline: storageSavingsBaseline(),
+    }
+}
+
+function computeWindowWithSavings(
+    rates: RateInterval[],
+    readingsByChannel: EnergyReading[][],
+    startMs: number,
+    endMs: number,
+    localDates: string[],
+): WindowWithSavings {
+    const combined = computeWindowCalculation(rates, readingsByChannel, startMs, endMs)
+    return {
+        ...serializeWindowResult(combined),
+        storage_savings: computeStorageSavings(
+            rates,
+            readingsByChannel[1] ?? [],
+            localDates,
+        ),
     }
 }
 
@@ -371,6 +535,9 @@ export async function GET(request: Request) {
         const yesterdayBounds = getUKDateBoundaries(-1)
         const sevenDayStart = getUKDateBoundaries(-7).start
         const thirtyDayStart = getUKDateBoundaries(-30).start
+        const yesterdayDates = [yesterdayDate]
+        const sevenDayDates = calendarDatesEndingOn(yesterdayDate, 7)
+        const thirtyDayDates = calendarDatesEndingOn(yesterdayDate, 30)
 
         const selectedDateBounds = selectedDate
             ? getUKDateBoundariesForDate(selectedDate)
@@ -413,46 +580,52 @@ export async function GET(request: Request) {
         const rates = recentData.rates
         const readingsByChannel = recentData.readingsByChannel
 
-        const yesterday = computeWindowResult(
+        const yesterday = computeWindowWithSavings(
             rates,
             readingsByChannel,
             yesterdayBounds.start.getTime(),
-            yesterdayBounds.end.getTime()
+            yesterdayBounds.end.getTime(),
+            yesterdayDates,
         )
-        const last7d = computeWindowResult(
+        const last7d = computeWindowWithSavings(
             rates,
             readingsByChannel,
             sevenDayStart.getTime(),
-            yesterdayBounds.end.getTime()
+            yesterdayBounds.end.getTime(),
+            sevenDayDates,
         )
-        const last30d = computeWindowResult(
+        const last30d = computeWindowWithSavings(
             rates,
             readingsByChannel,
             thirtyDayStart.getTime(),
-            yesterdayBounds.end.getTime()
+            yesterdayBounds.end.getTime(),
+            thirtyDayDates,
         )
 
         const selectedData = selectedSeparateData ?? recentData
         const selected_day: SelectedDayResult | null = selectedDateBounds && selectedDate
             ? {
                 date: selectedDate,
-                window: computeWindowResult(
+                window: computeWindowWithSavings(
                     selectedData.rates,
                     selectedData.readingsByChannel,
                     selectedDateBounds.start.getTime(),
-                    selectedDateBounds.end.getTime()
+                    selectedDateBounds.end.getTime(),
+                    [selectedDate],
                 ),
             }
             : null
 
         return NextResponse.json({
             scope: "all_heaters_combined",
+            storage_savings_scope: "channel_1_storage_only",
             telemetry_scope: meterDeviceId && siteId
                 ? "configured_site_and_meter"
                 : meterDeviceId || siteId
                     ? "partially_configured_legacy"
                     : "all_sites_and_devices_legacy",
             method: "kwh_weighted_avg_price_paid",
+            storage_savings_method: "same_measured_kwh_repriced_with_verified_orbis_timing",
             counter_series: meterDeviceId && siteId
                 ? `latest_real_counter_per_${COUNTER_SERIES_BUCKET_SECONDS}_seconds`
                 : "raw_rows_legacy",

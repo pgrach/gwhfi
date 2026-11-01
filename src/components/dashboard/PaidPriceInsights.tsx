@@ -5,12 +5,26 @@ import { useSearchParams } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { isHistoricalCalendarDate } from "@/lib/date-selection"
 import { getUKDateString } from "@/lib/date-utils"
-import { Sparkles } from "lucide-react"
+import { CircleAlert, Info, Sparkles } from "lucide-react"
+
+type StorageSavingsStatus = "available" | "no_usage" | "insufficient_data" | "not_applicable"
+
+interface StorageSavingsBaseline {
+    start: string
+    end: string
+    sample_days: number
+    excluded_local_window: string
+}
+
+interface StorageSavings {
+    status: StorageSavingsStatus
+    actual_avg_ppkwh: number | null
+    saved_gbp: number | null
+    baseline: StorageSavingsBaseline | null
+}
 
 interface PaidPriceWindow {
-    avg_paid_ppkwh: number | null
-    total_kwh_priced: number
-    total_kwh_measured: number
+    storage_savings: StorageSavings
 }
 
 interface EnergyStatsResponse {
@@ -23,6 +37,12 @@ interface EnergyStatsResponse {
     } | null
 }
 
+interface SavingsTileProps {
+    label: string
+    window: PaidPriceWindow | null | undefined
+    loading: boolean
+}
+
 function formatDateLabel(dateStr: string): string {
     const [year, month, day] = dateStr.split("-")
     if (!year || !month || !day) {
@@ -31,20 +51,143 @@ function formatDateLabel(dateStr: string): string {
     return `${day}/${month}/${year}`
 }
 
-function formatWindowValue(window: PaidPriceWindow | null | undefined): string {
-    if (!window) {
-        return "—"
+function isFiniteMetric(value: number | null | undefined): value is number {
+    return typeof value === "number" && Number.isFinite(value)
+}
+
+function formatRate(value: number): string {
+    return `${value.toFixed(2)}p/kWh`
+}
+
+function formatMoney(value: number): string {
+    const sign = value < 0 ? "-" : ""
+    return `${sign}£${Math.abs(value).toFixed(2)}`
+}
+
+function SavingsTile({ label, window, loading }: SavingsTileProps) {
+    const savings = window?.storage_savings
+
+    if (loading) {
+        return (
+            <div className="min-h-40 rounded-lg border border-border/60 bg-secondary/50 p-4" aria-busy="true">
+                <p className="text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-foreground">{label}</p>
+                <p className="mt-5 text-sm text-muted-foreground" aria-live="polite">Loading savings…</p>
+            </div>
+        )
     }
-    if (window.avg_paid_ppkwh != null) {
-        return `${window.avg_paid_ppkwh.toFixed(2)}p/kWh`
+
+    if (!savings) {
+        return (
+            <div className="min-h-40 rounded-lg border border-border/60 bg-secondary/50 p-4">
+                <p className="text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-foreground">{label}</p>
+                <p className="mt-5 flex items-center gap-2 text-sm font-semibold text-foreground">
+                    <CircleAlert className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                    Data unavailable
+                </p>
+                <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                    Storage-heater savings could not be loaded for this period.
+                </p>
+            </div>
+        )
     }
-    if (window.total_kwh_measured <= 0) {
-        return "No usage"
+
+    if (savings.status === "no_usage") {
+        return (
+            <div className="min-h-40 rounded-lg border border-border/60 bg-secondary/50 p-4">
+                <p className="text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-foreground">{label}</p>
+                <p className="mt-5 text-lg font-bold text-foreground">No storage-heater usage</p>
+                <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                    No savings estimate is shown because no storage-heater energy was measured.
+                </p>
+            </div>
+        )
     }
-    if (window.total_kwh_priced <= 0) {
-        return "No priced data"
+
+    if (savings.status === "not_applicable") {
+        return (
+            <div className="min-h-40 rounded-lg border border-border/60 bg-secondary/50 p-4">
+                <p className="text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-foreground">{label}</p>
+                <p className="mt-5 text-lg font-bold text-foreground">Smart control not active</p>
+                <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                    This period predates Heat21 storage-heater scheduling, so no algorithm savings are claimed.
+                </p>
+            </div>
+        )
     }
-    return "—"
+
+    const actualRate = savings.actual_avg_ppkwh
+    const savedGbp = savings.saved_gbp
+    const hasActualRate = isFiniteMetric(actualRate)
+
+    if (
+        savings.status !== "available"
+        || !hasActualRate
+        || !isFiniteMetric(savedGbp)
+    ) {
+        return (
+            <div className="min-h-40 rounded-lg border border-border/60 bg-secondary/50 p-4">
+                <p className="text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-foreground">{label}</p>
+                {hasActualRate && (
+                    <div className="mt-4">
+                        <p className="text-[11px] font-medium text-muted-foreground">Average tariff achieved</p>
+                        <p className={`mt-1 font-mono text-xl font-bold tabular-nums ${actualRate <= 0 ? "text-emerald-700 dark:text-emerald-400" : "text-rust"}`}>
+                            {formatRate(actualRate)}
+                        </p>
+                    </div>
+                )}
+                <p className="mt-5 flex items-center gap-2 text-sm font-semibold text-foreground">
+                    <CircleAlert className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                    Savings estimate unavailable
+                </p>
+                <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                    There is not enough verified baseline or tariff coverage for this period.
+                </p>
+            </div>
+        )
+    }
+
+    const positiveSaving = savedGbp > 0
+    const negativeSaving = savedGbp < 0
+    const savingTone = positiveSaving
+        ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+        : negativeSaving
+            ? "border-destructive/30 bg-destructive/10 text-destructive"
+            : "border-border/60 bg-background/50 text-foreground"
+
+    return (
+        <div className="min-h-48 rounded-lg border border-border/60 bg-secondary/50 p-4">
+            <p className="text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-foreground">{label}</p>
+
+            <div className="mt-4">
+                <p className="text-[11px] font-medium text-muted-foreground">Average tariff achieved</p>
+                <p className={`mt-1 font-mono text-2xl font-bold tabular-nums ${actualRate <= 0 ? "text-emerald-700 dark:text-emerald-400" : "text-rust"}`}>
+                    {formatRate(actualRate)}
+                </p>
+            </div>
+
+            <div className={`mt-4 rounded-md border px-4 py-3 ${savingTone}`}>
+                <p className="text-[11px] font-medium uppercase tracking-[0.08em]">
+                    {negativeSaving ? "Estimated difference" : "Estimated saving"}
+                </p>
+                <p
+                    className="mt-1 flex items-center gap-1.5 font-mono text-2xl font-extrabold tabular-nums"
+                    aria-label={negativeSaving
+                        ? `Estimated cost ${formatMoney(Math.abs(savedGbp))} higher than the estimate without smart control`
+                        : `Estimated savings ${formatMoney(savedGbp)}`}
+                >
+                    {positiveSaving && <Sparkles className="h-4 w-4 shrink-0" aria-hidden="true" />}
+                    {negativeSaving
+                        ? `Cost ${formatMoney(Math.abs(savedGbp))} more`
+                        : positiveSaving
+                            ? `Saved ${formatMoney(savedGbp)}`
+                            : "No cost difference"}
+                </p>
+                <p className="mt-1 text-[11px] font-medium">
+                    Versus estimated operation without smart control
+                </p>
+            </div>
+        </div>
+    )
 }
 
 export function PaidPriceInsights() {
@@ -77,7 +220,7 @@ export function PaidPriceInsights() {
                 }
             } catch (error) {
                 if (controller.signal.aborted) return
-                console.error("Failed to fetch paid price insights:", error)
+                console.error("Failed to fetch storage-heater savings:", error)
                 setStats(null)
             } finally {
                 if (!controller.signal.aborted) setLoading(false)
@@ -100,37 +243,39 @@ export function PaidPriceInsights() {
         { label: "Last 7 Days", window: stats?.last7d },
         { label: "Last 30 Days", window: stats?.last30d },
     ]
+    const baseline = windows
+        .map(({ window }) => window?.storage_savings?.baseline)
+        .find((candidate): candidate is StorageSavingsBaseline => candidate != null)
 
     return (
         <Card>
             <CardHeader className="pb-3">
-                <CardTitle className="font-display text-xl font-extrabold">Average Price You Paid (Heaters)</CardTitle>
+                <CardTitle className="font-display text-xl font-extrabold">Storage-Heater Tariff &amp; Estimated Savings</CardTitle>
                 <CardDescription>
-                    kWh-weighted unit price using actual heater consumption and Agile tariff intervals.
+                    The average tariff achieved through smart timing, plus one estimated cost difference.
                 </CardDescription>
+                <details className="group mt-1 rounded-md border border-border/60 bg-secondary/40 px-3 py-2 text-xs text-muted-foreground">
+                    <summary className="flex cursor-pointer list-none items-center gap-2 font-medium text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                        <Info className="h-3.5 w-3.5" aria-hidden="true" />
+                        How the estimate works
+                    </summary>
+                    <div className="mt-2 space-y-1.5 leading-relaxed">
+                        <p>
+                            Estimated pounds saved reprice the same measured storage-heater kWh using the verified pre-smart timing pattern, with the 16:00–19:00 timer cutoff retained. We do not claim reduced energy use.
+                        </p>
+                        {baseline && (
+                            <p>
+                                Historical baseline: {baseline.sample_days} verified day{baseline.sample_days === 1 ? "" : "s"}, {formatDateLabel(baseline.start)}–{formatDateLabel(baseline.end)}, retaining the {baseline.excluded_local_window} timer cutoff.
+                            </p>
+                        )}
+                    </div>
+                </details>
             </CardHeader>
             <CardContent>
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                    {windows.map(({ label, window }) => {
-                        const earning = window?.avg_paid_ppkwh != null && window.avg_paid_ppkwh <= 0
-                        return (
-                            <div
-                                key={label}
-                                className={`rounded-lg border p-4 ${earning ? "border-live/40 bg-live/10" : "border-border/60 bg-secondary/50"}`}
-                            >
-                                <p className="text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-foreground">{label}</p>
-                                <p className={`text-2xl font-bold mt-1 font-mono tabular-nums ${earning ? "text-live" : "text-rust"}`}>
-                                    {loading ? "…" : formatWindowValue(window)}
-                                </p>
-                                {earning && !loading && (
-                                    <p className="mt-1 flex items-center gap-1 text-xs font-medium text-live">
-                                        <Sparkles className="w-3 h-3" />
-                                        You got paid to heat
-                                    </p>
-                                )}
-                            </div>
-                        )
-                    })}
+                    {windows.map(({ label, window }) => (
+                        <SavingsTile key={label} label={label} window={window} loading={loading} />
+                    ))}
                 </div>
             </CardContent>
         </Card>
